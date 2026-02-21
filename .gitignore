@@ -1,0 +1,15 @@
+.env
+.env.*
+/config/
+/postgres/
+/backup/
+/caddy/
+/secrets/
+/tmp/
+/mnt/
+*.log
+*.sql
+*.sql.gz
+*.tar
+*.zip
+.DS_Store

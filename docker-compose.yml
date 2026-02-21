@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ha-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - /srv/ha-stack/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    depends_on:
+      - postgres
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - /srv/ha-stack/config:/config
+      - /etc/localtime:/etc/localtime:ro
+
+  caddy:
+    image: caddy:2
+    container_name: ha-caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /srv/ha-stack/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/ha-stack/caddy/data:/data
+      - /srv/ha-stack/caddy/config:/config

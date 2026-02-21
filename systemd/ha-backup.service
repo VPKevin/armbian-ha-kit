@@ -1,0 +1,8 @@
+[Unit]
+Description=Home Assistant backup (restic + pg_dump)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ha-backup.sh
