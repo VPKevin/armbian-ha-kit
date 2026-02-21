@@ -259,7 +259,6 @@ Actions :
 - Vérifier backup timer + exécution manuelle backup
 
 ### Roadmap (améliorations possibles)
-- Détection automatique fstype USB et écriture fstab correspondante
 - Support DNS-01 optionnel (providers : Cloudflare/OVH) pour éviter port 80
 - Mode “443-only” strict si TLS-ALPN-01 validé de manière fiable
 - Séparation plus stricte secrets : support Docker secrets / sops-age (optionnel)

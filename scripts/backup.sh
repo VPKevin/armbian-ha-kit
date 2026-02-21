@@ -32,6 +32,11 @@ gzip -f "$DUMP_FILE"
 REPOS_CONF="${STACK_DIR}/restic/repos.conf"
 PASSFILE="${STACK_DIR}/restic/password"
 
+if [[ ! -f "$REPOS_CONF" ]]; then
+  echo "$LOG_TAG No repos configured ($REPOS_CONF). Skipping restic backup."
+  exit 0
+fi
+
 if [[ ! -f "$PASSFILE" ]]; then
   echo "$LOG_TAG Missing restic password file: $PASSFILE"
   exit 1
@@ -39,14 +44,14 @@ fi
 
 export RESTIC_PASSWORD_FILE="$PASSFILE"
 
-if [[ ! -f "$REPOS_CONF" ]]; then
-  echo "$LOG_TAG No repos configured ($REPOS_CONF). Skipping restic backup."
-  exit 0
-fi
-
 while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
   [[ "$repo" =~ ^# ]] && continue
+
+  if ! mountpoint -q "$(dirname "$repo")" 2>/dev/null; then
+    echo "$LOG_TAG Mount point $(dirname "$repo") not mounted for repo $repo — skipping."
+    continue
+  fi
 
   export RESTIC_REPOSITORY="$repo"
 

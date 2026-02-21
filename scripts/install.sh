@@ -207,9 +207,10 @@ choose_usb_partition() {
 }
 
 setup_usb_mount() {
-  local part mountpoint uuid
+  local part mountpoint uuid fstype
   part="$(choose_usb_partition)"
   uuid="$(lsblk -no UUID "$part" | head -n1)"
+  fstype="$(lsblk -no FSTYPE "$part" | head -n1)"
   mountpoint="$(whi_input "USB" "Point de montage :" "/mnt/usbbackup")"
 
   if [[ -z "$uuid" ]]; then
@@ -217,10 +218,15 @@ setup_usb_mount() {
     exit 1
   fi
 
+  if [[ -z "$fstype" ]]; then
+    echo "Warning: could not detect filesystem type for $part, falling back to 'auto'."
+    fstype="auto"
+  fi
+
   mkdir -p "$mountpoint"
 
   sed -i "\|$mountpoint|d" /etc/fstab
-  echo "UUID=$uuid  $mountpoint  ext4  defaults,nofail,x-systemd.automount  0  2" >> /etc/fstab
+  echo "UUID=$uuid  $mountpoint  $fstype  defaults,nofail,x-systemd.automount  0  2" >> /etc/fstab
 
   systemctl daemon-reload
   mount "$mountpoint" || true
