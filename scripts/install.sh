@@ -219,8 +219,15 @@ setup_usb_mount() {
 
   mkdir -p "$mountpoint"
 
+  local fstype
+  fstype="$(lsblk -no FSTYPE "$part" | head -n1)"
+  if [[ -z "$fstype" ]]; then
+    echo "Warning: could not detect filesystem type for $part, defaulting to ext4"
+    fstype="ext4"
+  fi
+
   sed -i "\|$mountpoint|d" /etc/fstab
-  echo "UUID=$uuid  $mountpoint  ext4  defaults,nofail,x-systemd.automount  0  2" >> /etc/fstab
+  echo "UUID=$uuid  $mountpoint  $fstype  defaults,nofail,x-systemd.automount  0  2" >> /etc/fstab
 
   systemctl daemon-reload
   mount "$mountpoint" || true
@@ -318,6 +325,14 @@ EOF
 restore_from_backup() {
   apt_install restic
 
+  # Load env vars so POSTGRES_USER / POSTGRES_DB are available
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+
   if [[ ! -f "$RESTIC_PASS" ]]; then
     whiptail --msgbox "Aucun mot de passe restic trouvé (${RESTIC_PASS}).\nImpossible de restaurer." 12 80
     return
@@ -385,7 +400,7 @@ Repo: $chosen_repo" 18 80
   if [[ -z "$latest_dump" ]]; then
     whiptail --msgbox "Aucun dump postgres trouvé dans ${STACK_DIR}/backup.\nLa DB ne sera pas restaurée." 12 80
   else
-    gunzip -c "$latest_dump" | docker exec -i ha-postgres psql -U ha -d homeassistant
+    gunzip -c "$latest_dump" | docker exec -i ha-postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
   fi
 
   # Start full stack

@@ -48,6 +48,19 @@ while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
   [[ "$repo" =~ ^# ]] && continue
 
+  # Skip NAS/USB repos when the mount point is not active
+  if [[ "$repo" == /mnt/* ]]; then
+    mp="/mnt/$(echo "$repo" | cut -d/ -f3)"
+    if [[ "$mp" == "/mnt/" ]]; then
+      echo "$LOG_TAG Skipping $repo: cannot determine mount point"
+      continue
+    fi
+    if ! mountpoint -q "$mp" 2>/dev/null; then
+      echo "$LOG_TAG Skipping $repo: $mp is not mounted"
+      continue
+    fi
+  fi
+
   export RESTIC_REPOSITORY="$repo"
 
   echo "$LOG_TAG Restic backup to: $RESTIC_REPOSITORY"

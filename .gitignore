@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .idea
+.vscode
 /config/
 /postgres/
 /backup/

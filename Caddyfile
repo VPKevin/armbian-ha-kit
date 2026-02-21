@@ -1,3 +1,7 @@
+{
+    email {$LE_EMAIL:}
+}
+
 {$HA_DOMAIN} {
     encode gzip zstd
 
