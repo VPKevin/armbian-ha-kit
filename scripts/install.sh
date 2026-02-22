@@ -430,6 +430,17 @@ EOF
   done
 }
 
+setup_compose_prereqs() {
+  if ! req_bin docker; then
+    apt_install docker.io
+  fi
+
+  # Docker Compose plugin (compose v2)
+  if ! docker compose version >/dev/null 2>&1; then
+    apt_install docker-compose-plugin
+  fi
+}
+
 main() {
   need_root
   ensure_dirs
