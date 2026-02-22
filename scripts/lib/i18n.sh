@@ -15,25 +15,34 @@ detect_lang() {
 
 UI_LANG="${UI_LANG:-$(detect_lang)}"
 
-# Traductions: on garde un set réduit et extensible.
+# NOTE shellcheck:
+# Les variables TXT_* sont utilisées via expansion indirecte dans t() (ex: ${!var}),
+# donc shellcheck ne peut pas détecter l'usage. On désactive SC2034 pour ce fichier.
+# shellcheck disable=SC2034
+
 # shellcheck disable=SC2034
 TXT_OK_fr="OK"
+# shellcheck disable=SC2034
 TXT_OK_en="OK"
 
 # shellcheck disable=SC2034
 TXT_VALIDATE_fr="Valider"
+# shellcheck disable=SC2034
 TXT_VALIDATE_en="OK"
 
 # shellcheck disable=SC2034
 TXT_BACK_fr="Retour"
+# shellcheck disable=SC2034
 TXT_BACK_en="Back"
 
 # shellcheck disable=SC2034
 TXT_YES_fr="Oui"
+# shellcheck disable=SC2034
 TXT_YES_en="Yes"
 
 # shellcheck disable=SC2034
 TXT_NO_fr="Non"
+# shellcheck disable=SC2034
 TXT_NO_en="No"
 
 t() {
@@ -45,4 +54,3 @@ t() {
     printf "%s" "$key"
   fi
 }
-

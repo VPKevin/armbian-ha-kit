@@ -24,73 +24,6 @@ source "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/ha.sh"
 
-# --- i18n (FR/EN) ---------------------------------------------------------
-
-detect_lang() {
-  # Langue basée sur la locale OS. Fallback: fr.
-  local l="${LC_ALL:-${LANG:-}}"
-  l="${l,,}"
-  if [[ "$l" == en* ]]; then
-    echo "en"
-  else
-    echo "fr"
-  fi
-}
-
-UI_LANG="$(detect_lang)"
-
-# Traductions minimalistes. Usage: t key
-# shellcheck disable=SC2034
-TXT_INSTALL_SUMMARY_fr="Résumé"
-TXT_INSTALL_SUMMARY_en="Summary"
-
-# shellcheck disable=SC2034
-TXT_OK_fr="OK"
-TXT_OK_en="OK"
-
-# shellcheck disable=SC2034
-TXT_VALIDATE_fr="Valider"
-TXT_VALIDATE_en="OK"
-
-# shellcheck disable=SC2034
-TXT_BACK_fr="Retour"
-TXT_BACK_en="Back"
-
-# shellcheck disable=SC2034
-TXT_YES_fr="Oui"
-TXT_YES_en="Yes"
-
-# shellcheck disable=SC2034
-TXT_NO_fr="Non"
-TXT_NO_en="No"
-
-# shellcheck disable=SC2034
-TXT_EXIT_INSTALL_fr="Quitter l'installation"
-TXT_EXIT_INSTALL_en="Exit installation"
-
-# shellcheck disable=SC2034
-TXT_FINISH_INSTALL_fr="Terminer l'installation"
-TXT_FINISH_INSTALL_en="Finish installation"
-
-# shellcheck disable=SC2034
-TXT_REVIEW_SUMMARY_fr="Revoir ce résumé"
-TXT_REVIEW_SUMMARY_en="Review this summary"
-
-# shellcheck disable=SC2034
-TXT_WHAT_DO_fr="Que veux-tu faire ?"
-TXT_WHAT_DO_en="What do you want to do?"
-
-t() {
-  local key="$1"
-  local var="TXT_${key}_${UI_LANG}"
-  # indirect expansion; retourne key si non trouvé
-  if [[ -n "${!var:-}" ]]; then
-    printf "%s" "${!var}"
-  else
-    printf "%s" "$key"
-  fi
-}
-
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Run as root: sudo bash $0"
@@ -849,6 +782,21 @@ setup_compose_prereqs() {
   fi
 }
 
+start_stack() {
+  # Démarre la stack via le compose choisi.
+  if ! req_bin docker; then
+    whi_info "Docker" "Docker n'est pas installé. Impossible de démarrer la stack."
+    return 1
+  fi
+
+  if ! docker compose version >/dev/null 2>&1; then
+    whi_info "Docker" "Docker Compose (v2) est absent. Impossible de démarrer la stack."
+    return 1
+  fi
+
+  (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" up -d)
+}
+
 main() {
   need_root
   ensure_dirs
@@ -889,7 +837,11 @@ main() {
     exit 0
   fi
 
-  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d" 12 78 --ok-button "OK"
+  if start_stack; then
+    whi_info "Installation" "Installation terminée.\n\nStack démarrée.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
+  else
+    whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
+  fi
 }
 
 # N'exécute main que si le script est lancé directement.

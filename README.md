@@ -163,6 +163,22 @@ Then: `docker restart homeassistant`
 
 ---
 
+## Tests (reproductibles via Docker)
+
+Les tests (Bats + ShellCheck) s'exécutent dans un conteneur Docker, pour garantir que toutes les dépendances sont installées.
+
+```bash
+cd /srv/ha-stack
+bash tests/run-tests.sh
+```
+
+Ce script va :
+- builder une image Debian (Bookworm) avec `bats` et `shellcheck`
+- lancer `shellcheck` sur `scripts/*.sh`
+- lancer `bats` sur `tests/*.bats`
+
+---
+
 ## Security / Secrets
 
 | Secret | Location | Permissions |

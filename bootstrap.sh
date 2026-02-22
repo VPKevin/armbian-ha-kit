@@ -181,11 +181,48 @@ run_installer() {
 }
 
 # ---------------------------------------------------------------------------
+# Detect language
+# ---------------------------------------------------------------------------
+detect_lang() {
+  local l="${LC_ALL:-${LANG:-}}"
+  l="${l,,}"
+  if [[ "$l" == en* ]]; then
+    echo "en"
+  else
+    echo "fr"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Print next steps
 # ---------------------------------------------------------------------------
 print_next_steps() {
   ok "Bootstrap complete!"
-  cat <<EOF
+
+  local ui_lang
+  ui_lang="$(detect_lang)"
+
+  if [[ "$ui_lang" == "fr" ]]; then
+    cat <<EOF
+
+Prochaines étapes :
+  1. Vérifier le .env généré :   ${HA_INSTALL_DIR}/.env
+  2. Démarrer la stack :         cd ${HA_INSTALL_DIR} && docker compose up -d
+  3. Voir les logs :             docker compose logs -f
+  4. Accéder à Home Assistant :  http://<ip-de-la-box>:8123
+
+Mise à jour (bootstrap.sh est synchronisé dans ${HA_INSTALL_DIR} ; relance-le en pinning un tag) :
+  sudo bash ${HA_INSTALL_DIR}/bootstrap.sh --ref v1.2.3
+  # Ou le récupérer depuis GitHub :
+  # curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.2.3/bootstrap.sh | sudo bash -s -- --ref v1.2.3
+
+Rappel sécurité :
+  - Pinner un tag ou un SHA de commit pour des installs reproductibles.
+  - Ne jamais commit .env ou les dossiers de données.
+
+EOF
+  else
+    cat <<EOF
 
 Next steps:
   1. Review generated .env:   ${HA_INSTALL_DIR}/.env
@@ -203,6 +240,7 @@ Security reminder:
   - Never commit .env or data directories to version control.
 
 EOF
+  fi
 }
 
 # ---------------------------------------------------------------------------
