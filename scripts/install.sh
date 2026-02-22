@@ -6,12 +6,18 @@ ENV_FILE="${STACK_DIR}/.env"
 RESTIC_DIR="${STACK_DIR}/restic"
 RESTIC_REPOS="${RESTIC_DIR}/repos.conf"
 RESTIC_PASS="${RESTIC_DIR}/password"
-SAMBA_CREDS="/etc/samba/creds-ha-nas"
+SAMBA_CREDS="/etc/samba/creds-ha"
 
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Run as root: sudo bash $0"
     exit 1
+  fi
+
+  # whiptail a besoin d'un TTY. Quand on lance via "curl | sudo bash",
+  # stdin n'est pas un terminal => les touches (flèches) s'affichent comme ^[[C.
+  if [[ ! -t 0 ]]; then
+    exec </dev/tty
   fi
 }
 
@@ -36,6 +42,10 @@ whi_pass() {
 whi_yesno() {
   local title="$1" prompt="$2"
   whiptail --title "$title" --yesno "$prompt" 10 70
+}
+
+is_interactive_tty() {
+  [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
 }
 
 ensure_dirs() {
@@ -145,6 +155,13 @@ init_restic_repo() {
 setup_restic_password() {
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
+    return
+  fi
+
+  # Fallback non-interactif si pas de TTY (cron/cloud-init/pipe, etc.)
+  if ! is_interactive_tty; then
+    head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
+    chmod 600 "$RESTIC_PASS"
     return
   fi
 
