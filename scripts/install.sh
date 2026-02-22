@@ -12,6 +12,18 @@ SAMBA_CREDS="/etc/samba/creds-ha"
 DEFAULT_COMPOSE_PATH="${STACK_DIR}/docker-compose.yml"
 COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"
 
+# --- modules --------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/i18n.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/ui.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/env.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/ha.sh"
+
 # --- i18n (FR/EN) ---------------------------------------------------------
 
 detect_lang() {
@@ -880,4 +892,7 @@ main() {
   whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d" 12 78 --ok-button "OK"
 }
 
-main "$@"
+# N'exécute main que si le script est lancé directement.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
