@@ -92,6 +92,13 @@ restic_choose_snapshot() {
     "${choices[@]}" 3>&1 1>&2 2>&3
 }
 
+restore_confirm_wizard() {
+  if ! whi_yesno "Restauration" "Restaurer un backup Restic maintenant ?"; then
+    return 0
+  fi
+  restore_wizard
+}
+
 restore_wizard() {
   if ! req_bin restic; then
     apt_install restic
@@ -102,9 +109,8 @@ restore_wizard() {
     return 1
   fi
 
-  if ! whi_yesno "Restauration" "Restaurer un backup Restic maintenant ?"; then
-    return 0
-  fi
+  # IMPORTANT: le menu principal propose déjà "Restaurer". Donc ici, on ne redemande
+  # pas une confirmation: si on est ici, c'est que l'utilisateur veut restaurer.
 
   whi_info "Restauration" "Astuce: il faut d'abord que le repository Restic soit accessible (NAS/USB monté)."
 

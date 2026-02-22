@@ -342,6 +342,37 @@ EOF
   done
 }
 
+prompt_caddy_domain() {
+  # Demande uniquement si Caddy est activé.
+  local enable_caddy="${ENABLE_CADDY:-}"
+  if [[ -z "${enable_caddy:-}" ]]; then
+    enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ "$enable_caddy" == "0" || "$enable_caddy" == "false" ]]; then
+    return 0
+  fi
+
+  local ha_domain le_email
+  ha_domain="$(env_get "HA_DOMAIN" "$ENV_FILE" 2>/dev/null || true)"
+  le_email="$(env_get "LE_EMAIL" "$ENV_FILE" 2>/dev/null || true)"
+
+  ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return 1
+  le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return 1
+
+  if [[ -z "${ha_domain:-}" || -z "${le_email:-}" ]]; then
+    whi_info "Caddy" "Domaine et email sont requis si Caddy est activé."
+    return 1
+  fi
+
+  env_set_kv "HA_DOMAIN" "$ha_domain" "$ENV_FILE"
+  env_set_kv "LE_EMAIL" "$le_email" "$ENV_FILE"
+
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE" 2>/dev/null || true
+  set +a
+}
 
 main() {
   need_root
@@ -369,6 +400,7 @@ main() {
 
         setup_env
         prompt_features
+        prompt_caddy_domain || true
         configure_homeassistant_yaml
         setup_systemd_backup
         setup_restic_password
@@ -383,8 +415,7 @@ main() {
           setup_usb_backup || whi_info "USB" "Configuration USB annulée."
         fi
 
-        # Wizard restauration (optionnel)
-        restore_wizard || true
+        # NOTE: la restauration est maintenant un choix explicite au menu principal.
 
         local summary_rc=0
         show_summary_and_edit || summary_rc=$?
@@ -398,7 +429,7 @@ main() {
           if wait_for_health 240; then
             whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
           else
-            whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nLes derniers logs ont été affichés dans la console."
+            whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nSi les conteneurs restent en état 'Created', vérifie les variables du .env (ex: TZ, HA_DOMAIN/LE_EMAIL si Caddy).\n\nLes derniers logs ont été affichés dans la console."
           fi
         else
           whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
@@ -409,6 +440,7 @@ main() {
         choose_compose_source || true
         setup_env
         prompt_features
+        prompt_caddy_domain || true
         if restore_wizard; then
           whi_info "Restauration" "Restauration terminée."
         else

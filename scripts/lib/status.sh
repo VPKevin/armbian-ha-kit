@@ -81,14 +81,29 @@ status_wizard() {
   local compose_path="${COMPOSE_PATH:-${stack_dir}/docker-compose.yml}"
   local env_file="${ENV_FILE:-${stack_dir}/.env}"
 
-  local installed="non"
-  [[ -d "$stack_dir" ]] && installed="oui"
-
   local compose_present="non"
   [[ -f "$compose_path" ]] && compose_present="oui"
 
   local env_present="non"
   [[ -f "$env_file" ]] && env_present="oui"
+
+  local any_project_artifact=0
+  [[ -f "$compose_path" || -f "$env_file" || -f "${stack_dir}/config/configuration.yaml" ]] && any_project_artifact=1
+
+  local any_runtime=0
+  if command -v docker >/dev/null 2>&1; then
+    docker inspect ha-postgres >/dev/null 2>&1 && any_runtime=1
+    docker inspect homeassistant >/dev/null 2>&1 && any_runtime=1
+    docker inspect ha-caddy >/dev/null 2>&1 && any_runtime=1
+  fi
+  if systemctl list-unit-files 2>/dev/null | grep -q '^ha-backup\.timer'; then
+    any_runtime=1
+  fi
+
+  local installed="non"
+  if [[ -d "$stack_dir" && $any_project_artifact -eq 1 && $any_runtime -eq 1 ]]; then
+    installed="oui"
+  fi
 
   local enable_caddy_raw=""
   local enable_upnp_raw=""
@@ -179,3 +194,4 @@ EOF
 
   whiptail --title "Status" --msgbox "$msg" 32 100 --ok-button "$(t OK)"
 }
+
