@@ -96,7 +96,16 @@ EOF
 
 setup_systemd_backup() {
   # Installer le script de backup "métier" dans le stack dir (normalement déjà présent)
-  install -m 0755 "${STACK_DIR}/scripts/backup.sh" /srv/ha-stack/scripts/backup.sh
+  # (Sur certaines exécutions, la source et la destination peuvent être le même fichier.)
+  local src_backup="${STACK_DIR}/scripts/backup.sh"
+  local dst_backup="/srv/ha-stack/scripts/backup.sh"
+  if [[ -f "$src_backup" ]]; then
+    if [[ "$(readlink -f "$src_backup")" != "$(readlink -f "$dst_backup" 2>/dev/null || echo "")" ]]; then
+      install -m 0755 "$src_backup" "$dst_backup"
+    else
+      chmod 0755 "$dst_backup" || true
+    fi
+  fi
 
   # Installer le wrapper appelé par systemd (source: repo)
   if [[ -f "${STACK_DIR}/ha-backup.sh" ]]; then
