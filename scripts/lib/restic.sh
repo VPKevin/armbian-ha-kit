@@ -3,6 +3,21 @@ set -euo pipefail
 
 # Restic: password, repos, init, restauration.
 
+ensure_restic() {
+  # Restic est requis pour init/snapshots/restore. On l'installe si absent.
+  if req_bin restic; then
+    return 0
+  fi
+
+  # apt_install est défini dans scripts/install.sh (source commun).
+  apt_install restic
+
+  if ! req_bin restic; then
+    whi_info "Restic" "Restic n'est pas disponible (commande 'restic' absente après installation)."
+    return 1
+  fi
+}
+
 add_repo() {
   local repo="$1"
   mkdir -p "$RESTIC_DIR"
@@ -15,6 +30,8 @@ add_repo() {
 
 init_restic_repo() {
   local repo="$1"
+  ensure_restic || return 1
+
   export RESTIC_REPOSITORY="$repo"
   export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
   if ! restic snapshots >/dev/null 2>&1; then
@@ -100,9 +117,7 @@ restore_confirm_wizard() {
 }
 
 restore_wizard() {
-  if ! req_bin restic; then
-    apt_install restic
-  fi
+  ensure_restic || return 1
 
   if [[ ! -f "$RESTIC_PASS" ]]; then
     whi_info "Restic" "Mot de passe Restic absent (${RESTIC_PASS})."

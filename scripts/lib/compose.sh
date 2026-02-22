@@ -63,6 +63,16 @@ start_stack() {
     return 1
   fi
 
-  (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" up -d)
+  local enable_caddy="${ENABLE_CADDY:-}"
+  if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  local profiles=()
+  if [[ "${enable_caddy:-1}" == "1" || "${enable_caddy:-}" == "true" ]]; then
+    profiles+=("--profile" "caddy")
+  fi
+
+  (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
 }
 

@@ -92,42 +92,66 @@ prompt_features() {
   fi
 
   # Si l'env existe déjà (ré-install), on réutilise ces valeurs comme défauts.
-  local existing_caddy existing_upnp
+  local existing_caddy existing_upnp existing_has_proxy
   existing_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
   existing_upnp="$(env_get "ENABLE_UPNP" "$ENV_FILE" 2>/dev/null || true)"
+  existing_has_proxy="$(env_get "HAS_EXTERNAL_PROXY" "$ENV_FILE" 2>/dev/null || true)"
 
   local default_caddy=1
   local default_upnp=0
+  local default_has_proxy=0
   if [[ -n "${existing_caddy:-}" ]]; then
     if [[ "$existing_caddy" == "0" || "$existing_caddy" == "false" ]]; then default_caddy=0; fi
   fi
   if [[ -n "${existing_upnp:-}" ]]; then
     if [[ "$existing_upnp" == "1" || "$existing_upnp" == "true" ]]; then default_upnp=1; fi
   fi
+  if [[ -n "${existing_has_proxy:-}" ]]; then
+    if [[ "$existing_has_proxy" == "1" || "$existing_has_proxy" == "true" ]]; then default_has_proxy=1; fi
+  fi
 
+  local has_external_proxy=$default_has_proxy
   local enable_caddy=$default_caddy
   local enable_upnp=$default_upnp
 
-  if [[ $default_caddy -eq 1 ]]; then
-    if ! whi_yesno "Exposition" "Mettre en place Caddy (reverse proxy) ?\n\nUtile si tu veux exposer Home Assistant via HTTPS avec un domaine.\nSi tu as déjà un proxy ailleurs, tu peux répondre Non."; then
-      enable_caddy=0
+  # 1) Proxy externe ? (ex: Traefik/Nginx/HAProxy sur une autre machine)
+  if [[ $default_has_proxy -eq 1 ]]; then
+    if ! whi_yesno "Exposition" "Un reverse proxy externe est actuellement configuré. Le garder ?\n\nExemples: Nginx/Traefik/HAProxy, routeur/box qui fait proxy."; then
+      has_external_proxy=0
     fi
   else
-    if whi_yesno "Exposition" "Caddy est actuellement désactivé. Le réactiver ?"; then
-      enable_caddy=1
+    if whi_yesno "Exposition" "As-tu déjà un reverse proxy (Nginx/Traefik/HAProxy) qui publiera Home Assistant ?\n\nSi oui: ce kit ne doit pas utiliser les ports 80/443 et Home Assistant devra faire confiance à l'IP du proxy."; then
+      has_external_proxy=1
     fi
   fi
 
+  # 2) Caddy (proxy local) uniquement si pas de proxy externe
+  if [[ $has_external_proxy -eq 1 ]]; then
+    enable_caddy=0
+  else
+    if [[ $default_caddy -eq 1 ]]; then
+      if ! whi_yesno "Exposition" "Activer Caddy sur cette machine (reverse proxy + HTTPS) ?\n\nÇa utilise les ports 80/443."; then
+        enable_caddy=0
+      fi
+    else
+      if whi_yesno "Exposition" "Caddy est actuellement désactivé. Le réactiver ?\n\nÇa utilisera les ports 80/443."; then
+        enable_caddy=1
+      fi
+    fi
+  fi
+
+  # 3) UPnP (après le choix proxy)
   if [[ $default_upnp -eq 1 ]]; then
     if ! whi_yesno "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement."; then
       enable_upnp=0
     fi
   else
-    if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports / un proxy, réponds Non."; then
+    if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non."; then
       enable_upnp=1
     fi
   fi
 
+  env_set_kv "HAS_EXTERNAL_PROXY" "$has_external_proxy" "$ENV_FILE"
   env_set_kv "ENABLE_CADDY" "$enable_caddy" "$ENV_FILE"
   env_set_kv "ENABLE_UPNP" "$enable_upnp" "$ENV_FILE"
 
@@ -153,6 +177,9 @@ POSTGRES_USER=$pg_user
 POSTGRES_DB=$pg_db
 POSTGRES_PASSWORD=$pg_pass
 # Features
+# Si tu as déjà un reverse proxy ailleurs (Nginx/Traefik/HAProxy), mets HAS_EXTERNAL_PROXY=1.
+HAS_EXTERNAL_PROXY=0
+# Caddy ne doit être activé que si la machine peut utiliser les ports 80/443.
 ENABLE_CADDY=1
 ENABLE_UPNP=0
 EOF
