@@ -1,268 +1,183 @@
-# HA Stack (Armbian) — Home Assistant + PostgreSQL + Caddy + Backups (NAS/USB) + UPnP wizard
+# HA Stack (Armbian) — Home Assistant + PostgreSQL + Caddy + Backups
 
-## Objectif
+A **reproducible**, **migratable** Home Assistant installation on an ARM board
+running Armbian + Docker, managed by an interactive wizard.
 
-Ce projet fournit une installation **pérenne**, **reproductible** et **migrable** de Home Assistant sur une box ARM sous **Armbian** avec **Docker**.
-
-Contraintes & objectifs principaux :
-- Installer Home Assistant **en Docker** (pas HA OS / Supervised).
-- Installation **facilement réinstallable** sur une autre box ou un autre support, sans oublier d’étapes.
-- **Aucune interruption** voulue pour les sauvegardes (donc DB externe, pas SQLite seule).
-- Exposition sur Internet via **reverse proxy HTTPS**.
-- Sauvegardes **automatisées** vers :
-    - **NAS SMB** et/ou
-    - **support USB**
-- Sauvegardes **chiffrées**, versionnées, et avec rétention.
-- Assisté par un **wizard whiptail** (questions interactives).
-- Optionnel : tentative d’automatisation des redirections via **UPnP** (miniupnpc), avec test de compatibilité avant.
-
-Public visé :
-- Utilisateur final (non expert) qui veut un “assistant d’installation” simple.
-- Mainteneur futur / contributeur (besoin d’une doc claire et des invariants du projet).
+- Home Assistant in Docker (not HA OS / Supervised)
+- Automated, encrypted backups to NAS (SMB) and/or USB via Restic
+- HTTPS reverse proxy (Caddy + Let's Encrypt, auto-renew)
+- No git required on the target machine — bootstrap installs everything
 
 ---
 
-## Architecture (stack Docker)
+## Quick Start (one-liner install)
 
-Services principaux :
-- **homeassistant** : `ghcr.io/home-assistant/home-assistant:stable`
-    - en `network_mode: host` (meilleure compatibilité LAN : mDNS, intégrations, etc.)
-- **postgres** : `postgres:16`
-    - DB robuste, backups cohérents sans arrêter HA
-- **caddy** : `caddy:2`
-    - reverse proxy HTTPS, certificats Let’s Encrypt automatiques
-    - publie `80` et `443`
+> ⚠️ **Security warning**: review the script before piping it into bash.
+> See [bootstrap.sh](bootstrap.sh) in this repository.
+> **Pin a version** for production use — replace `main` with a tag/SHA.
 
-Sauvegardes (sur l’hôte) :
-- Dump PostgreSQL via `pg_dump` (dans `/srv/ha-stack/backup/`)
-- Restic : sauvegarde chiffrée de :
-    - `/srv/ha-stack/config` (données Home Assistant)
-    - `/srv/ha-stack/backup` (dumps SQL)
-- Rétention Restic :
-    - `--keep-daily 7`
-    - `--keep-weekly 10`
-    - `--prune`
-
-Restauration (recommandée) :
-- Restaurer `config/` + `backup/` depuis restic
-- Redémarrer PostgreSQL vide
-- Réimporter le dump SQL le plus récent (portable, robuste)
-
----
-
-## Pré-requis
-
-Sur la box Armbian :
-- Docker et Docker Compose déjà installés (c’est le cas dans notre contexte).
-- `whiptail` installé (déjà présent).
-- Accès root (sudo).
-
-Sur le réseau :
-- Un nom de domaine public pointant vers votre IP publique (enregistrement DNS).
-- Accès entrant au port **443** (et parfois **80** selon challenge ACME).
-    - Option UPnP : le script peut tenter d’ouvrir 443 (et 80 temporairement) si le routeur le permet.
-    - Sinon, redirection manuelle sur le routeur.
-
----
-
-## Dossier d’installation
-
-Tout le projet vit dans :
-- `/srv/ha-stack`
-
-Structure attendue :
-- `docker-compose.yml`
-- `Caddyfile`
-- `.env` (créé par le wizard, permissions strictes)
-- `config/` (données HA)
-- `postgres/` (données DB)
-- `backup/` (dumps)
-- `restic/` (password + repos.conf)
-- `scripts/` (install + backup)
-- `systemd/` (service/timer backup)
-- `caddy/` (données Caddy : certificats/config runtime)
-
----
-
-## Sécurité / Secrets
-
-Secrets et données sensibles :
-- `/srv/ha-stack/.env` : mots de passe DB, domaine, email ACME
-    - permissions : `chmod 600`, propriétaire `root`
-- `/etc/samba/creds-ha-nas` : credentials SMB NAS
-    - permissions : `chmod 600`, propriétaire `root`
-- `/srv/ha-stack/restic/password` : mot de passe restic
-    - permissions : `chmod 600`
-
-⚠️ Ne jamais committer dans Git :
-- `.env`
-- `config/`, `postgres/`, `backup/`, `caddy/`
-- credentials SMB
-- tout dépôt restic
-
-Un `.gitignore` est fourni.
-
----
-
-## Installation (wizard)
-
-### 1) Cloner / copier le repo
-Recommandé :
-- cloner le repo dans `/srv/ha-stack`
-- ou copier les fichiers manuellement dans ce chemin
-
-### 2) Exécuter le wizard
 ```bash
-sudo bash /srv/ha-stack/scripts/install.sh
+# Install latest (main branch) — review before running!
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
+  | sudo bash
+
+# Pin a specific version (recommended for production):
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
+  | sudo bash -s -- v1.2.0
+
+# Or use the BOOTSTRAP_REF environment variable:
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
+  | sudo BOOTSTRAP_REF=v1.2.0 bash
 ```
 
-Le wizard :
-- génère `.env`
-- propose d’activer backups NAS/USB
-- configure montage SMB (NAS) et/ou montage USB (UUID + fstab)
-- initialise restic sur les cibles
-- propose une restauration depuis restic (optionnel)
-- propose UPnP (optionnel) : test + mapping 443 et éventuellement 80 temporaire
-- configure `configuration.yaml` minimal (Postgres recorder + trusted_proxies strict)
-- démarre la stack docker
-- installe le timer systemd de backup si des repos restic sont configurés
+The bootstrap script:
+1. Checks for root / sudo
+2. Installs only `curl`, `ca-certificates`, and `tar` (no git needed)
+3. Downloads this repository as a `.tar.gz` from GitHub
+4. Extracts files into `/srv/ha-stack` **without overwriting** existing user data
+   (`config/`, `postgres/`, `backup/`, `caddy/`, `.env`)
+5. Launches the interactive install wizard (`scripts/install.sh`)
 
 ---
 
-## Accès
+## Prerequisites
 
-- Local :
-    - `http://IP_DE_LA_BOX:8123`
-- Internet (via Caddy) :
-    - `https://<votre_domaine>`
+**On the Armbian box:**
+- Docker and Docker Compose installed
+- `whiptail` available (usually pre-installed)
+- Root access (`sudo`)
+
+**Network:**
+- A public domain name pointing to your public IP (DNS A/AAAA record)
+- Inbound TCP **443** open (and sometimes **80** for ACME challenge)
+  - The wizard can attempt UPnP port mapping automatically
 
 ---
 
-## Sauvegardes
+## Updating
 
-### Lancement manuel
+Re-run bootstrap to pull the latest (or a pinned) version.
+Existing user data and `.env` are preserved automatically.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
+  | sudo bash -s -- <new-ref>
+```
+
+Or, if the repo is already in `/srv/ha-stack`:
+
+```bash
+cd /srv/ha-stack && sudo docker compose pull && sudo docker compose up -d
+```
+
+---
+
+## Access
+
+| Location | URL |
+|----------|-----|
+| Local network | `http://<box-ip>:8123` |
+| Internet (HTTPS) | `https://<your-domain>` |
+
+---
+
+## Backups
+
+### Manual backup
 ```bash
 sudo /srv/ha-stack/scripts/backup.sh
 ```
 
-### Timer systemd
-- Vérifier :
+### Systemd timer (automatic, configured by wizard)
 ```bash
+# Check status
 systemctl status ha-backup.timer
 systemctl list-timers | grep ha-backup
-```
 
-- Logs :
-```bash
+# View logs
 journalctl -u ha-backup.service -n 200 --no-pager
 ```
 
----
-
-## Restauration / Migration (résumé)
-
-Objectif : déplacer l’installation vers une autre box/support avec un minimum de risques.
-
-Étapes recommandées :
-1. Installer Docker + Compose sur la nouvelle box
-2. Monter NAS/USB (ou au moins rendre le dépôt restic accessible)
-3. Copier le repo dans `/srv/ha-stack` (scripts + compose + Caddyfile)
-4. Lancer :
-    - `sudo bash /srv/ha-stack/scripts/install.sh`
-    - répondre **Oui** à “repartir d’une sauvegarde”
-5. Le wizard :
-    - restaure `config/` + `backup/`
-    - redémarre postgres
-    - réimporte le dump SQL
-    - redémarre HA + Caddy
-
-Pourquoi on restaure Postgres via dump :
-- évite les soucis de compatibilité de répertoire `postgres/` entre machines/versions
-- meilleure portabilité et diagnostic
+Backup strategy:
+- PostgreSQL `pg_dump` into `/srv/ha-stack/backup/` (no HA downtime)
+- Restic encrypted snapshot of `config/` + `backup/`
+- Retention: daily×7, weekly×10
 
 ---
 
-## UPnP : comportement attendu
+## Restore / Migration
 
-- Le wizard peut installer `miniupnpc`.
-- Il effectue un test :
-    - ajoute une règle TCP temporaire
-    - liste les règles
-    - supprime la règle
-- Si le test échoue :
-    - le wizard indique à l’utilisateur quoi configurer manuellement sur le routeur
-- Si OK :
-    - propose de créer une redirection TCP 443 -> 443
-    - propose d’ouvrir TCP 80 temporairement (utile si ACME ne passe pas sans 80)
-- Le script tente d’extraire une information de "lease duration" si le routeur la fournit, mais ce n’est pas garanti selon les modèles.
+Move your installation to a new box or storage:
 
----
+1. Install Docker + Compose on the new box
+2. Mount or make accessible the NAS/USB Restic repository
+3. Run bootstrap on the new box (see Quick Start above)
+4. When the wizard asks *"restore from backup?"* — answer **Yes**
+5. The wizard will:
+   - Restore `config/` and `backup/` from Restic
+   - Restart PostgreSQL and re-import the latest SQL dump
+   - Start the full stack
 
-## Dépannage
-
-### Certificat HTTPS ne se génère pas
-Causes fréquentes :
-- DNS du domaine ne pointe pas vers l’IP publique
-- port 443 fermé/non redirigé
-- port 80 nécessaire selon challenge / routeur / CGNAT
-- CGNAT chez certains FAI : pas d’accès entrant possible
-
-Actions :
-- vérifier `A/AAAA` DNS
-- tester depuis l’extérieur :
-    - `curl -vk https://<domaine>`
-- consulter les logs Caddy :
-    - `docker logs ha-caddy --tail 200`
-
-### Home Assistant ne voit pas le proxy / erreur 400
-- vérifier dans `/srv/ha-stack/config/configuration.yaml` :
-    - `http: use_x_forwarded_for: true`
-    - `trusted_proxies:` (subnet docker détecté)
-- redémarrer HA :
-    - `docker restart homeassistant`
+> **Why SQL dump and not a binary restore?**
+> SQL dumps are portable across PostgreSQL versions and avoid data-directory
+> compatibility issues between machines.
 
 ---
 
-## Pour contributeurs / prochains agents (instructions de maintenance)
+## Troubleshooting
 
-### Besoin à respecter (invariants)
-- Tout doit être installable par **un wizard whiptail**
-- Installation persistante sous `/srv/ha-stack`
-- Backups sans arrêt (DB externe obligatoire)
-- Sauvegardes restic chiffrées + rétention :
-    - daily 7 / weekly 10
-- Restauration “portable” via dump SQL (pas de restore binaire du datadir Postgres)
-- Secrets jamais écrits en clair dans le repo, seulement sur la machine (root-only)
+### HTTPS certificate not issued
 
-### Points sensibles
-- `homeassistant` est en `network_mode: host`, donc le proxy (Caddy) en bridge parle à `127.0.0.1:8123`.
-- `trusted_proxies` doit être en mode **strict** :
-    - détecter subnet du bridge docker via `docker network inspect bridge`
-- SMB credentials :
-    - stocker dans `/etc/samba/creds-ha-nas` chmod 600
-    - fstab doit être idempotent (ne pas dupliquer les lignes)
-- USB :
-    - utiliser UUID dans fstab
-    - le wizard doit proposer une sélection de partition via `lsblk`
-- UPnP :
-    - doit toujours tester avant de proposer de mapper 443
-    - si échec, afficher les instructions de redirection manuelle
+| Cause | Fix |
+|-------|-----|
+| DNS not pointing to your IP | Check A/AAAA records |
+| Port 443 not open | Forward TCP 443 on your router (or use UPnP wizard) |
+| Port 80 needed by ACME | Forward TCP 80 temporarily |
+| CGNAT (no inbound) | Contact ISP or use DNS-01 challenge |
 
-### Tests minimaux à faire après changement
-- `shellcheck` sur scripts bash
-- Lancement wizard sur une machine de test (VM ou SBC) :
-    - mode sans NAS/USB
-    - mode NAS seul
-    - mode USB seul
-    - mode restore
-- Vérifier création de cert Caddy (au moins en staging ACME si possible)
-- Vérifier backup timer + exécution manuelle backup
+```bash
+# Test from outside:
+curl -vk https://<your-domain>
 
-### Roadmap (améliorations possibles)
-- Détection automatique fstype USB et écriture fstab correspondante
-- Support DNS-01 optionnel (providers : Cloudflare/OVH) pour éviter port 80
-- Mode “443-only” strict si TLS-ALPN-01 validé de manière fiable
-- Séparation plus stricte secrets : support Docker secrets / sops-age (optionnel)
+# Caddy logs:
+docker logs ha-caddy --tail 200
+```
+
+### Home Assistant 400 / proxy error
+
+Check `/srv/ha-stack/config/configuration.yaml`:
+
+```yaml
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - <docker-bridge-subnet>   # set by wizard, e.g. 172.17.0.0/16
+```
+
+```bash
+docker restart homeassistant
+```
+
+---
+
+## Security
+
+Sensitive files are **never committed** — see [.gitignore](.gitignore).
+Copy [.env.example](.env.example) to `/srv/ha-stack/.env` and fill in values
+before running the wizard manually.
+
+| File | Permissions |
+|------|-------------|
+| `/srv/ha-stack/.env` | `600 root:root` |
+| `/etc/samba/creds-ha-nas` | `600 root:root` |
+| `/srv/ha-stack/restic/password` | `600 root:root` |
+
+---
+
+## For contributors / AI agents
+
+See [AGENTS.md](AGENTS.md) for architecture details, invariants, and
+maintenance instructions.
 
 ---
 
