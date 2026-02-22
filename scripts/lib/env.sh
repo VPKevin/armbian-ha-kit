@@ -28,8 +28,18 @@ env_has_key() {
   grep -Eq "^[[:space:]]*${key}=" "$file"
 }
 
+strip_key_prefix_if_any() {
+  local key="$1" value="$2"
+  if [[ "${value:-}" == "${key}="* ]]; then
+    echo "${value#"${key}"=}"
+  else
+    echo "$value"
+  fi
+}
+
 env_set_kv() {
   local key="$1" value="$2" file="$3"
+  value="$(strip_key_prefix_if_any "$key" "$value")"
   value="$(sanitize_env_value "$value")"
   mkdir -p "$(dirname "$file")"
   touch "$file"
