@@ -106,12 +106,69 @@ Un `.gitignore` est fourni.
 
 ## Installation (wizard)
 
-### 1) Cloner / copier le repo
+### Option A — One-liner bootstrap (recommandé)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/install-remote.sh \
+  | sudo bash
+```
+
+> ⚠️ **Avertissement sécurité** : exécuter `curl | bash` depuis un repo public sans vérification présente un risque.
+> Pour une installation en production, **pinner une version** :
+>
+> ```bash
+> # Télécharge et inspecte d'abord
+> curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.0.0/install-remote.sh \
+>   -o /tmp/install-remote.sh
+> less /tmp/install-remote.sh          # inspecte le script
+> sudo bash /tmp/install-remote.sh --ref v1.0.0
+> ```
+
+#### Options de `install-remote.sh`
+
+| Option | Description | Défaut |
+|--------|-------------|--------|
+| `--ref <branch\|tag\|SHA>` | Ref Git à cloner/checkout | `main` |
+| `--dir <path>` | Répertoire d'installation | `/srv/ha-stack` |
+| `--yes` | Passe toutes les confirmations interactives | (interactif) |
+
+Exemples :
+
+```bash
+# Installer une version taguée
+sudo bash install-remote.sh --ref v1.0.0
+
+# Installer dans un répertoire personnalisé
+sudo bash install-remote.sh --dir /opt/ha-stack
+
+# Utiliser un commit SHA précis (vérification d'intégrité stricte)
+# Remplace <SHA> par le SHA complet (40 hex) du commit voulu
+sudo bash install-remote.sh --ref <SHA>
+```
+
+#### Mise à jour ultérieure
+
+```bash
+# Re-lancer le bootstrap pointant sur la nouvelle version :
+sudo bash /srv/ha-stack/install-remote.sh --ref v1.1.0 --yes
+
+# Ou manuellement :
+cd /srv/ha-stack
+sudo git fetch --tags origin
+sudo git checkout v1.1.0
+sudo docker compose pull && sudo docker compose up -d
+```
+
+---
+
+### Option B — Installation manuelle (clone)
+
+#### 1) Cloner / copier le repo
 Recommandé :
 - cloner le repo dans `/srv/ha-stack`
 - ou copier les fichiers manuellement dans ce chemin
 
-### 2) Exécuter le wizard
+#### 2) Exécuter le wizard
 ```bash
 sudo bash /srv/ha-stack/scripts/install.sh
 ```
