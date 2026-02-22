@@ -49,63 +49,58 @@ choose_usb_partition() {
 
   local choices=()
 
-  # lsblk JSON est plus fiable (pas d'alignement à parser)
-  if lsblk --json -o NAME,PATH,TYPE,RM,TRAN,SIZE,FSTYPE,MOUNTPOINT,UUID,MODEL >/dev/null 2>&1; then
-    local json
-    json="$(lsblk --json -o NAME,PATH,TYPE,RM,TRAN,SIZE,FSTYPE,MOUNTPOINT,UUID,MODEL 2>/dev/null || true)"
+  # On ne liste QUE les partitions (TYPE=part). Une clé USB = /dev/sda (disk) + /dev/sda1 (part).
+  # Monter /dev/sda (disk) ne marche pas => on l'exclut.
 
-    # Extraction simple sans jq: on repère les blocs TYPE=part et RM=1 ou TRAN=usb
-    # et on récupère PATH/UUID/MODEL/SIZE/FSTYPE/MOUNTPOINT.
-    # NOTE: best-effort, si parsing échoue on retombe sur la méthode texte.
-    local lines
-    lines="$(printf '%s\n' "$json" \
-      | tr '{' '\n' \
-      | grep -E '"type"\s*:\s*"part"' -n 2>/dev/null || true)"
+  # Méthode principale: lsblk en mode tableau, facile à parser sans jq.
+  # Colonnes: PATH TYPE RM TRAN SIZE FSTYPE MOUNTPOINT UUID MODEL
+  while IFS= read -r line; do
+    # shellcheck disable=SC2206
+    local cols=($line)
 
-    if [[ -n "${lines:-}" ]]; then
-      # Re-parse with awk in a streaming way: keep last seen fields.
-      while IFS= read -r blk; do
-        local path uuid size fstype mp model tran rm
-        path="$(grep -oE '"path"\s*:\s*"[^"]+"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')"
-        uuid="$(grep -oE '"uuid"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        size="$(grep -oE '"size"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        fstype="$(grep -oE '"fstype"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        mp="$(grep -oE '"mountpoint"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        model="$(grep -oE '"model"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        tran="$(grep -oE '"tran"\s*:\s*"[^"]*"' <<<"$blk" | head -n1 | sed -E 's/.*"([^"]*)"/\1/')"
-        rm="$(grep -oE '"rm"\s*:\s*(true|false|[0-9]+)' <<<"$blk" | head -n1 | awk -F: '{gsub(/[[:space:]]/,"",$2); print $2}')"
+    local path type rm tran size fstype mp uuid
+    path="${cols[0]:-}"
+    type="${cols[1]:-}"
+    rm="${cols[2]:-}"
+    tran="${cols[3]:-}"
+    size="${cols[4]:-}"
+    fstype="${cols[5]:-}"
+    mp="${cols[6]:-}"
+    uuid="${cols[7]:-}"
 
-        # Filtre: USB (TRAN=usb) ou removable (RM=true/1)
-        if [[ "${tran:-}" != "usb" && "${rm:-}" != "true" && "${rm:-}" != "1" ]]; then
-          continue
-        fi
+    [[ "$type" != "part" ]] && continue
 
-        [[ -z "${path:-}" ]] && continue
-
-        local label="${path}"
-        [[ -n "${model:-}" ]] && label+=" (${model})"
-        [[ -n "${size:-}" ]] && label+=" ${size}"
-        [[ -n "${fstype:-}" ]] && label+=" ${fstype}"
-        [[ -n "${mp:-}" && "${mp:-}" != "null" ]] && label+=" mounted:${mp}"
-        [[ -n "${uuid:-}" && "${uuid:-}" != "null" ]] && label+=" uuid:${uuid}"
-
-        # ID: uuid si dispo, sinon path (on utilisera /dev/... dans /etc/fstab via /dev/disk/by-uuid si uuid)
-        local id
-        if [[ -n "${uuid:-}" && "${uuid:-}" != "null" ]]; then
-          id="$uuid"
-        else
-          id="$path"
-        fi
-
-        choices+=("$id" "$label")
-      done < <(printf '%s\n' "$json" | tr '}' '\n' | grep -E '"type"\s*:\s*"part"' 2>/dev/null || true)
+    # Filtre USB/removable
+    if [[ "$tran" != "usb" && "$rm" != "1" && "$rm" != "true" ]]; then
+      continue
     fi
-  fi
 
-  # Fallback texte si pas de choix
+    # Sur certains lsblk, MOUNTPOINT peut être vide => mp="-" via -P pas possible ici.
+    [[ -z "${mp:-}" ]] && mp="-"
+    [[ -z "${uuid:-}" ]] && uuid="-"
+    [[ -z "${fstype:-}" ]] && fstype="-"
+
+    local label
+    label="$path  ($fstype, $size)"
+    if [[ "$mp" != "-" ]]; then
+      label+=" mounted:$mp"
+    fi
+
+    local id
+    if [[ "$uuid" != "-" ]]; then
+      id="$uuid"
+      label+=" uuid:$uuid"
+    else
+      id="$path"
+    fi
+
+    choices+=("$id" "$label")
+  done < <(lsblk -nrpo PATH,TYPE,RM,TRAN,SIZE,FSTYPE,MOUNTPOINT,UUID 2>/dev/null || true)
+
+  # Fallback (très rare): ancienne commande
   if [[ ${#choices[@]} -eq 0 ]]; then
     while IFS= read -r line; do
-      local path name fstype size mp uuid
+      local name fstype size mp uuid
       name="$(awk '{print $1}' <<<"$line")"
       fstype="$(awk '{print $2}' <<<"$line")"
       size="$(awk '{print $3}' <<<"$line")"
@@ -113,26 +108,25 @@ choose_usb_partition() {
       uuid="$(awk '{print $5}' <<<"$line")"
 
       [[ -z "$name" ]] && continue
+      [[ "$name" != */* ]] && continue
 
-      path="$name"
-
-      local label="$path ($fstype, $size)"
-      if [[ -n "$mp" && "$mp" != "-" ]]; then
-        label+=" mounted:$mp"
-      fi
-      if [[ -n "$uuid" && "$uuid" != "-" ]]; then
-        label+=" uuid:$uuid"
-      fi
+      local label="$name ($fstype, $size)"
+      [[ -n "$mp" && "$mp" != "-" ]] && label+=" mounted:$mp"
 
       local id
-      if [[ -n "$uuid" && "$uuid" != "-" ]]; then id="$uuid"; else id="$path"; fi
+      if [[ -n "$uuid" && "$uuid" != "-" ]]; then
+        id="$uuid"
+        label+=" uuid:$uuid"
+      else
+        id="$name"
+      fi
 
       choices+=("$id" "$label")
     done < <(lsblk -rpo NAME,FSTYPE,SIZE,MOUNTPOINT,UUID 2>/dev/null | awk '$2 != "" {print $0}')
   fi
 
   if [[ ${#choices[@]} -eq 0 ]]; then
-    whi_info "USB" "Aucune partition USB détectée (lsblk n'a rien retourné).\n\nSi tu vois la clé dans 'lsusb' mais pas dans 'lsblk', c'est souvent qu'elle n'apparaît pas comme stockage de masse, ou qu'elle n'a pas encore de partition."
+    whi_info "USB" "Aucune partition USB détectée.\n\nSi tu vois la clé dans 'lsusb' mais pas ici, vérifie qu'elle apparaît dans 'lsblk' (périphérique /dev/sdX) et qu'elle contient au moins une partition."
     return 1
   fi
 
@@ -159,7 +153,6 @@ setup_usb_backup() {
     sed -i "\|UUID=$id|d" /etc/fstab
     echo "UUID=$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   else
-    # Exemple: /dev/sda1
     sed -i "\|^${id}[[:space:]]|d" /etc/fstab
     echo "$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   fi
