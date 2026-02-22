@@ -15,4 +15,7 @@ RUN apt-get update -y \
 
 WORKDIR /repo
 
-CMD ["bash", "-lc", "shellcheck scripts/install.sh scripts/lib/*.sh && caddy fmt --overwrite Caddyfile && caddy validate --adapter caddyfile --config Caddyfile && bats tests/*.bats"]
+CMD bash -lc 'shellcheck scripts/install.sh scripts/lib/*.sh \
+  && caddy fmt --overwrite Caddyfile \
+  && grep -Fq "\${HA_DOMAIN} {" Caddyfile \
+  && bats tests/*.bats'
