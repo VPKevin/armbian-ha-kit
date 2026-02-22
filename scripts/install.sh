@@ -74,6 +74,11 @@ configure_homeassistant_yaml() {
     chmod 600 "$cfg"
   fi
 
+  # Assure la présence des variables Postgres (set -u => sinon "unbound variable")
+  : "${POSTGRES_USER:=ha}"
+  : "${POSTGRES_DB:=homeassistant}"
+  : "${POSTGRES_PASSWORD:=changeme}"
+
   # Ajoute un bloc minimal si pas déjà présent (sans écraser le reste)
   if ! grep -q "^recorder:" "$cfg"; then
     cat >> "$cfg" <<EOF
@@ -241,6 +246,12 @@ POSTGRES_PASSWORD=$pg_pass
 EOF
     chmod 600 "$ENV_FILE"
   fi
+
+  # Charge les variables dans l’environnement du script
+  # shellcheck disable=SC1090
+  set -a
+  . "$ENV_FILE"
+  set +a
 }
 
 setup_compose_prereqs() {
