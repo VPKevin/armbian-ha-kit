@@ -266,6 +266,31 @@ choose_usb_partition() {
     "${choices[@]}" 3>&1 1>&2 2>&3
 }
 
+setup_env() {
+  mkdir -p "$STACK_DIR"
+
+  # Variables utilisées par docker-compose.yml + configuration.yaml
+  if [[ ! -f "$ENV_FILE" ]]; then
+    local pg_user pg_db pg_pass
+    pg_user="ha"
+    pg_db="homeassistant"
+    pg_pass="$(head -c 24 /dev/urandom | base64 | tr -d '=+/\n' | head -c 24)"
+
+    cat > "$ENV_FILE" <<EOF
+POSTGRES_USER=$pg_user
+POSTGRES_DB=$pg_db
+POSTGRES_PASSWORD=$pg_pass
+EOF
+    chmod 600 "$ENV_FILE"
+  fi
+
+  # Charge les variables dans l’environnement du script
+  # shellcheck disable=SC1090
+  set -a
+  . "$ENV_FILE"
+  set +a
+}
+
 setup_usb_backup() {
   apt_install util-linux
 
