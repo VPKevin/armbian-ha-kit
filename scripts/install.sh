@@ -8,6 +8,10 @@ RESTIC_REPOS="${RESTIC_DIR}/repos.conf"
 RESTIC_PASS="${RESTIC_DIR}/password"
 SAMBA_CREDS="/etc/samba/creds-ha"
 
+# Compose utilisé pour le démarrage final + complétion du .env
+DEFAULT_COMPOSE_PATH="${STACK_DIR}/docker-compose.yml"
+COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"
+
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Run as root: sudo bash $0"
@@ -53,6 +57,12 @@ whi_info() {
   whiptail --title "$title" --msgbox "$msg" 12 80 --ok-button "OK"
 }
 
+whi_confirm() {
+  local title="$1" prompt="$2"
+  whiptail --title "$title" --yesno "$prompt" 10 70 \
+    --yes-button "Oui" --no-button "Non"
+}
+
 is_interactive_tty() {
   [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
 }
@@ -63,54 +73,266 @@ ensure_dirs() {
   chmod 700 "$STACK_DIR" || true
 }
 
-write_file_if_missing() {
-  local path="$1"
-  local content="$2"
-  if [[ ! -f "$path" ]]; then
-    printf "%s\n" "$content" > "$path"
-  fi
+# --- Compose/.env helpers -------------------------------------------------
+
+sanitize_env_value() {
+  # Dans un .env, on évite les retours ligne. On garde tel quel sinon.
+  local v="$1"
+  v="${v//$'\n'/}"
+  echo "$v"
 }
 
-detect_docker_subnet() {
-  # Retourne le subnet du bridge docker, sinon fallback large
-  local subnet
-  subnet="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null || true)"
-  if [[ -n "$subnet" ]]; then
-    echo "$subnet"
+env_get() {
+  local key="$1" file="$2"
+  [[ -f "$file" ]] || return 1
+  # Support minimal des formats KEY=VALUE (ignore commentaires/exports)
+  awk -F= -v k="$key" 'BEGIN{found=0} $0 ~ "^[[:space:]]*"k"=" {sub(/^[[:space:]]*"k"=/, ""); print; found=1; exit} END{exit(found?0:1)}' "$file"
+}
+
+env_has_key() {
+  local key="$1" file="$2"
+  [[ -f "$file" ]] || return 1
+  grep -Eq "^[[:space:]]*${key}=" "$file"
+}
+
+env_set_kv() {
+  # Met à jour ou ajoute KEY=VALUE, sans toucher au reste.
+  local key="$1" value="$2" file="$3"
+  value="$(sanitize_env_value "$value")"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  chmod 600 "$file" || true
+
+  if env_has_key "$key" "$file"; then
+    # Remplace la première occurrence.
+    # shellcheck disable=SC2001
+    sed -i "0,/^[[:space:]]*${key}=/{s|^[[:space:]]*${key}=.*|${key}=${value}|}" "$file"
   else
-    echo "172.16.0.0/12"
+    printf "%s=%s\n" "$key" "$value" >> "$file"
   fi
 }
 
-configure_homeassistant_yaml() {
-  local cfg="${STACK_DIR}/config/configuration.yaml"
-  local subnet
-  subnet="$(detect_docker_subnet)"
+compose_extract_vars() {
+  # Extrait: VAR [TAB] default (default peut être vide)
+  # Supporte ${VAR} et ${VAR:-default}
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
 
-  if [[ ! -f "$cfg" ]]; then
-    touch "$cfg"
-    chown root:root "$cfg"
-    chmod 600 "$cfg"
+  # On peut avoir plusieurs occurrences; on déduplique en gardant le 1er default non vide.
+  awk '
+    {
+      line=$0
+      while (match(line, /\$\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}/)) {
+        token=substr(line, RSTART, RLENGTH)
+        inner=substr(token, 3, length(token)-3)
+        name=inner
+        def=""
+        if (index(inner,":-")>0) {
+          name=substr(inner, 1, index(inner,":-")-1)
+          def=substr(inner, index(inner,":-")+2)
+        }
+        if (!(name in seen)) {
+          seen[name]=1
+          defs[name]=def
+          order[++n]=name
+        } else if (defs[name]=="" && def!="") {
+          defs[name]=def
+        }
+        line=substr(line, RSTART+RLENGTH)
+      }
+    }
+    END {
+      for (i=1;i<=n;i++) {
+        name=order[i]
+        printf "%s\t%s\n", name, defs[name]
+      }
+    }
+  ' "$compose_file"
+}
+
+choose_compose_source() {
+  # Choix du compose: défaut / chemin local / URL
+  # Dépose une copie dans STACK_DIR si nécessaire.
+  local action
+  action=$(whiptail --title "Docker Compose" --menu "Quel docker-compose veux-tu utiliser ?" 18 84 10 \
+    --ok-button "Valider" --cancel-button "Retour" \
+    "defaut" "Utiliser ${DEFAULT_COMPOSE_PATH}" \
+    "local" "Saisir un chemin local" \
+    "url" "Télécharger depuis une URL (http/https)" \
+    3>&1 1>&2 2>&3) || return 1
+
+  case "$action" in
+    defaut)
+      COMPOSE_PATH="$DEFAULT_COMPOSE_PATH"
+      ;;
+    local)
+      local p
+      p="$(whi_input "Docker Compose" "Chemin complet du docker-compose.yml" "$DEFAULT_COMPOSE_PATH")" || return 1
+      if [[ ! -f "$p" ]]; then
+        whi_info "Docker Compose" "Fichier introuvable: $p"
+        return 1
+      fi
+      COMPOSE_PATH="$p"
+      ;;
+    url)
+      apt_install curl ca-certificates
+      local u dest
+      u="$(whi_input "Docker Compose" "URL (http/https)" "")" || return 1
+      dest="${STACK_DIR}/docker-compose.remote.yml"
+      if ! curl -fsSL "$u" -o "$dest"; then
+        whi_info "Docker Compose" "Téléchargement impossible. Vérifie l'URL/réseau."
+        return 1
+      fi
+      chmod 600 "$dest" || true
+      COMPOSE_PATH="$dest"
+      ;;
+  esac
+
+  return 0
+}
+
+env_ensure_from_compose() {
+  local compose_file="$1"
+
+  [[ -f "$ENV_FILE" ]] || touch "$ENV_FILE"
+  chmod 600 "$ENV_FILE" || true
+
+  local vars
+  vars="$(compose_extract_vars "$compose_file" || true)"
+  if [[ -z "$vars" ]]; then
+    return 0
   fi
 
-  # Assure la présence des variables Postgres (set -u => sinon "unbound variable")
-  : "${POSTGRES_USER:=ha}"
-  : "${POSTGRES_DB:=homeassistant}"
-  : "${POSTGRES_PASSWORD:=changeme}"
+  # Charge ce qu'on peut (pour pré-remplir l'input)
+  # shellcheck disable=SC1090
+  set -a
+  . "$ENV_FILE" 2>/dev/null || true
+  set +a
 
-  # Ajoute un bloc minimal si pas déjà présent (sans écraser le reste)
-  if ! grep -q "^recorder:" "$cfg"; then
-    cat >> "$cfg" <<EOF
+  while IFS=$'\t' read -r name def; do
+    [[ -z "${name:-}" ]] && continue
 
-recorder:
-  db_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
+    # Ignore les variables Compose internes fréquentes si tu veux (aucune pour l'instant)
 
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-    - ${subnet}
-EOF
+    if env_has_key "$name" "$ENV_FILE"; then
+      continue
+    fi
+
+    # pour set -u: éviter une sortie si l'utilisateur annule
+    local current=""
+    current="$(env_get "$name" "$ENV_FILE" 2>/dev/null || true)"
+
+    local default="${current:-}"
+    if [[ -z "$default" && -n "${def:-}" ]]; then
+      default="$def"
+    fi
+
+    local val
+    val="$(whi_input "Variables Compose" "$name (manquant dans .env)" "$default")" || return 1
+    env_set_kv "$name" "$val" "$ENV_FILE"
+  done <<< "$vars"
+
+  # Recharge les variables dans l’environnement du script
+  # shellcheck disable=SC1090
+  set -a
+  . "$ENV_FILE" 2>/dev/null || true
+  set +a
+}
+
+# --- Restic restore -------------------------------------------------------
+
+restic_can_run() {
+  req_bin restic || return 1
+  [[ -f "$RESTIC_PASS" ]] || return 1
+  return 0
+}
+
+restic_choose_repo() {
+  if [[ ! -f "$RESTIC_REPOS" || ! -s "$RESTIC_REPOS" ]]; then
+    whi_info "Restic" "Aucun repository dans ${RESTIC_REPOS}. Configure d'abord un NAS/USB."
+    return 1
   fi
+
+  local choices=()
+  while IFS= read -r repo; do
+    [[ -z "$repo" ]] && continue
+    choices+=("$repo" "$repo")
+  done < "$RESTIC_REPOS"
+
+  whiptail --title "Restic" --menu "Choisis un repository" 20 92 12 \
+    --ok-button "Valider" --cancel-button "Retour" \
+    "${choices[@]}" 3>&1 1>&2 2>&3
+}
+
+restic_choose_snapshot() {
+  local repo="$1"
+  export RESTIC_REPOSITORY="$repo"
+  export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
+
+  local snaps
+  if ! snaps="$(restic snapshots --compact 2>/dev/null | awk 'NR>2 && $1 ~ /^[0-9a-f]+$/ {print $1"\t"$2" "$3" "$4" "$5}' | head -n 30)"; then
+    return 1
+  fi
+
+  if [[ -z "$snaps" ]]; then
+    whi_info "Restic" "Aucun snapshot trouvé dans $repo."
+    return 1
+  fi
+
+  local choices=()
+  while IFS=$'\t' read -r id label; do
+    [[ -z "$id" ]] && continue
+    choices+=("$id" "$label")
+  done <<< "$snaps"
+
+  whiptail --title "Restic" --menu "Choisis un snapshot (30 derniers max)" 22 92 12 \
+    --ok-button "Valider" --cancel-button "Retour" \
+    "${choices[@]}" 3>&1 1>&2 2>&3
+}
+
+restore_wizard() {
+  # Pré-requis: repos configurés + password + restic installé
+  if ! req_bin restic; then
+    apt_install restic
+  fi
+
+  if [[ ! -f "$RESTIC_PASS" ]]; then
+    whi_info "Restic" "Mot de passe Restic absent (${RESTIC_PASS})."
+    return 1
+  fi
+
+  if ! whi_yesno "Restauration" "Restaurer un backup Restic maintenant ?"; then
+    return 0
+  fi
+
+  whi_info "Restauration" "Astuce: il faut d'abord que le repository Restic soit accessible (NAS/USB monté)."
+
+  local repo snapshot target
+  repo="$(restic_choose_repo)" || return 1
+  snapshot="$(restic_choose_snapshot "$repo")" || return 1
+  target="$(whi_input "Restauration" "Restaurer dans quel dossier ?" "$STACK_DIR")" || return 1
+
+  if [[ "$target" == "/" || -z "$target" ]]; then
+    whi_info "Restauration" "Chemin de destination invalide."
+    return 1
+  fi
+
+  mkdir -p "$target"
+
+  if ! whi_confirm "Restauration" "Confirme la restauration\n\nRepo: $repo\nSnapshot: $snapshot\nCible: $target\n\nÇa peut écraser des fichiers existants."; then
+    return 1
+  fi
+
+  export RESTIC_REPOSITORY="$repo"
+  export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
+
+  if ! restic restore "$snapshot" --target "$target"; then
+    whi_info "Restauration" "Échec de restauration. Vérifie le mot de passe, le montage NAS/USB et le réseau."
+    return 1
+  fi
+
+  whi_info "Restauration" "Restauration terminée dans: $target"
+  return 0
 }
 
 setup_systemd_backup() {
@@ -284,10 +506,13 @@ EOF
     chmod 600 "$ENV_FILE"
   fi
 
+  # Complète .env depuis le compose choisi (si des variables sont manquantes)
+  env_ensure_from_compose "$COMPOSE_PATH" || true
+
   # Charge les variables dans l’environnement du script
   # shellcheck disable=SC1090
   set -a
-  . "$ENV_FILE"
+  . "$ENV_FILE" 2>/dev/null || true
   set +a
 }
 
@@ -351,6 +576,8 @@ show_summary_and_edit() {
     summary=$(cat <<EOF
 Installation : ${STACK_DIR}
 
+Compose : ${COMPOSE_PATH}
+
 .env : ${ENV_FILE}
 ${env_preview}
 
@@ -375,45 +602,67 @@ Backups
 EOF
 )
 
-    whiptail --title "Résumé" --msgbox "$summary" 28 92 --ok-button "OK"
+    whiptail --title "Résumé" --msgbox "$summary" 30 96 --ok-button "OK"
 
     local action
-    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 18 78 10 \
+    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 20 90 12 \
       --ok-button "Valider" --cancel-button "Retour" \
-      "continuer" "Terminer l'installation" \
-      "edit-env" "Modifier POSTGRES_* (.env)" \
+      "revoir" "Revoir ce résumé" \
+      "finaliser" "Terminer l'installation" \
+      "quit" "Quitter l'installation" \
+      "edit-compose" "Changer le docker-compose utilisé" \
+      "edit-env" "Compléter / modifier le .env (variables compose)" \
       "restic-pass" "Redéfinir le mot de passe Restic" \
+      "restore" "Restaurer un backup Restic" \
       "nas" "Configurer / reconfigurer un NAS SMB" \
       "usb" "Configurer / reconfigurer un disque USB" \
       3>&1 1>&2 2>&3)
 
     if [[ -z "${action:-}" ]]; then
-      # Retour => réaffiche le résumé
+      # Retour => revient au menu (donc permet de "rester" sans finaliser)
       continue
     fi
 
     case "$action" in
-      continuer)
-        return 0
+      revoir)
+        continue
+        ;;
+      quit)
+        return 2
+        ;;
+      finaliser)
+        if whi_confirm "Résumé" "Finaliser l'installation maintenant ?"; then
+          return 0
+        fi
+        continue
+        ;;
+      edit-compose)
+        choose_compose_source || true
+        # Re-complète .env en fonction du nouveau compose
+        env_ensure_from_compose "$COMPOSE_PATH" || true
+        set -a
+        . "$ENV_FILE" 2>/dev/null || true
+        set +a
+        configure_homeassistant_yaml
         ;;
       edit-env)
+        # Complète d'abord depuis compose, puis options Postgres (historique)
+        env_ensure_from_compose "$COMPOSE_PATH" || true
+
         local pg_user pg_db pg_pass
         pg_user="${POSTGRES_USER:-ha}"
         pg_db="${POSTGRES_DB:-homeassistant}"
 
-        pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")"
-        pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")"
-        pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")"
+        pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
+        pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
+        pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
 
-        cat > "$ENV_FILE" <<EOF
-POSTGRES_USER=$pg_user
-POSTGRES_DB=$pg_db
-POSTGRES_PASSWORD=$pg_pass
-EOF
-        chmod 600 "$ENV_FILE"
+        if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
+        if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
+        if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
 
         set -a
-        . "$ENV_FILE"
+        . "$ENV_FILE" 2>/dev/null || true
         set +a
 
         configure_homeassistant_yaml
@@ -421,6 +670,9 @@ EOF
       restic-pass)
         rm -f "$RESTIC_PASS"
         setup_restic_password
+        ;;
+      restore)
+        restore_wizard || whi_info "Restauration" "Restauration annulée / échouée."
         ;;
       nas)
         setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
@@ -476,24 +728,37 @@ main() {
   apt_install mawk || apt_install gawk
 
   setup_compose_prereqs
+
+  # Choix du compose (important avant setup_env pour compléter le .env)
+  choose_compose_source || true
+
   setup_env
   configure_homeassistant_yaml
   setup_systemd_backup
   setup_restic_password
 
-  # Optionnel: config NAS
-  if whi_yesno "Backup" "Configurer un repository restic sur un NAS (SMB/CIFS) ?"; then
+  # À propos de l'ordre: sur une ré-install/migration, l'env/restic peuvent déjà exister.
+  # On propose donc d'abord de rendre accessible un repo Restic (NAS/USB) pour backup *ou restauration*.
+  if whi_yesno "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?"; then
     setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
   fi
 
-  # Optionnel: config USB
-  if whi_yesno "Backup" "Configurer un repository restic sur un disque USB ?"; then
+  if whi_yesno "Backup" "Rendre accessible un repository restic sur un disque USB ?"; then
     setup_usb_backup || whi_info "USB" "Configuration USB annulée."
   fi
 
-  show_summary_and_edit
+  # Wizard restauration (optionnel)
+  restore_wizard || true
 
-  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose up -d" 12 70 --ok-button "OK"
+  local summary_rc=0
+  show_summary_and_edit || summary_rc=$?
+
+  if [[ "$summary_rc" -eq 2 ]]; then
+    whi_info "Installation" "Installation quittée. Rien n'a été démarré."
+    exit 0
+  fi
+
+  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d" 12 78 --ok-button "OK"
 }
 
 main "$@"
