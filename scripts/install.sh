@@ -32,6 +32,8 @@ source "${SCRIPT_DIR}/lib/systemd.sh"
 source "${SCRIPT_DIR}/lib/health.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/uninstall.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/status.sh"
 
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
@@ -72,6 +74,70 @@ ensure_dirs() {
   chmod 700 "$STACK_DIR" || true
 }
 
+main_menu() {
+  whiptail --title "Armbian HA Kit" --menu "Que veux-tu faire ?" 18 80 10 \
+    --ok-button "$(t VALIDATE)" --cancel-button "Quitter" \
+    "install" "Installer / configurer la stack" \
+    "restore" "Restaurer un backup (Restic)" \
+    "status" "Vérifier le status (containers, backup, options)" \
+    "remove" "Tout désinstaller" \
+    3>&1 1>&2 2>&3
+}
+
+prompt_features() {
+  # On pose les questions uniquement en mode interactif. Sinon, on garde les valeurs existantes
+  # ou des defaults sûrs (Caddy on, UPnP off).
+  if ! is_interactive_tty; then
+    return 0
+  fi
+
+  # Si l'env existe déjà (ré-install), on réutilise ces valeurs comme défauts.
+  local existing_caddy existing_upnp
+  existing_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  existing_upnp="$(env_get "ENABLE_UPNP" "$ENV_FILE" 2>/dev/null || true)"
+
+  local default_caddy=1
+  local default_upnp=0
+  if [[ -n "${existing_caddy:-}" ]]; then
+    if [[ "$existing_caddy" == "0" || "$existing_caddy" == "false" ]]; then default_caddy=0; fi
+  fi
+  if [[ -n "${existing_upnp:-}" ]]; then
+    if [[ "$existing_upnp" == "1" || "$existing_upnp" == "true" ]]; then default_upnp=1; fi
+  fi
+
+  local enable_caddy=$default_caddy
+  local enable_upnp=$default_upnp
+
+  if [[ $default_caddy -eq 1 ]]; then
+    if ! whi_yesno "Exposition" "Mettre en place Caddy (reverse proxy) ?\n\nUtile si tu veux exposer Home Assistant via HTTPS avec un domaine.\nSi tu as déjà un proxy ailleurs, tu peux répondre Non."; then
+      enable_caddy=0
+    fi
+  else
+    if whi_yesno "Exposition" "Caddy est actuellement désactivé. Le réactiver ?"; then
+      enable_caddy=1
+    fi
+  fi
+
+  if [[ $default_upnp -eq 1 ]]; then
+    if ! whi_yesno "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement."; then
+      enable_upnp=0
+    fi
+  else
+    if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports / un proxy, réponds Non."; then
+      enable_upnp=1
+    fi
+  fi
+
+  env_set_kv "ENABLE_CADDY" "$enable_caddy" "$ENV_FILE"
+  env_set_kv "ENABLE_UPNP" "$enable_upnp" "$ENV_FILE"
+
+  # Recharge pour la suite du script.
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE" 2>/dev/null || true
+  set +a
+}
+
 setup_env() {
   mkdir -p "$STACK_DIR"
 
@@ -86,6 +152,9 @@ setup_env() {
 POSTGRES_USER=$pg_user
 POSTGRES_DB=$pg_db
 POSTGRES_PASSWORD=$pg_pass
+# Features
+ENABLE_CADDY=1
+ENABLE_UPNP=0
 EOF
     chmod 600 "$ENV_FILE"
   fi
@@ -285,44 +354,79 @@ main() {
 
   setup_compose_prereqs
 
-  # Choix du compose (important avant setup_env pour compléter le .env)
-  choose_compose_source || true
+  while true; do
+    local action
+    action="$(main_menu || true)"
 
-  setup_env
-  configure_homeassistant_yaml
-  setup_systemd_backup
-  setup_restic_password
-
-  # À propos de l'ordre: sur une ré-install/migration, l'env/restic peuvent déjà exister.
-  # On propose donc d'abord de rendre accessible un repo Restic (NAS/USB) pour backup *ou restauration*.
-  if whi_yesno "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?"; then
-    setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
-  fi
-
-  if whi_yesno "Backup" "Rendre accessible un repository restic sur un disque USB ?"; then
-    setup_usb_backup || whi_info "USB" "Configuration USB annulée."
-  fi
-
-  # Wizard restauration (optionnel)
-  restore_wizard || true
-
-  local summary_rc=0
-  show_summary_and_edit || summary_rc=$?
-
-  if [[ "$summary_rc" -eq 2 ]]; then
-    whi_info "Installation" "Installation quittée. Rien n'a été démarré."
-    exit 0
-  fi
-
-  if start_stack; then
-    if wait_for_health 240; then
-      whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
-    else
-      whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nLes derniers logs ont été affichés dans la console."
+    if [[ -z "${action:-}" ]]; then
+      exit 0
     fi
-  else
-    whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
-  fi
+
+    case "$action" in
+      install)
+        # Choix du compose (important avant setup_env pour compléter le .env)
+        choose_compose_source || true
+
+        setup_env
+        prompt_features
+        configure_homeassistant_yaml
+        setup_systemd_backup
+        setup_restic_password
+
+        # À propos de l'ordre: sur une ré-install/migration, l'env/restic peuvent déjà exister.
+        # On propose donc d'abord de rendre accessible un repo Restic (NAS/USB) pour backup *ou restauration*.
+        if whi_yesno "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?"; then
+          setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+        fi
+
+        if whi_yesno "Backup" "Rendre accessible un repository restic sur un disque USB ?"; then
+          setup_usb_backup || whi_info "USB" "Configuration USB annulée."
+        fi
+
+        # Wizard restauration (optionnel)
+        restore_wizard || true
+
+        local summary_rc=0
+        show_summary_and_edit || summary_rc=$?
+
+        if [[ "$summary_rc" -eq 2 ]]; then
+          whi_info "Installation" "Installation quittée. Rien n'a été démarré."
+          continue
+        fi
+
+        if start_stack; then
+          if wait_for_health 240; then
+            whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
+          else
+            whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nLes derniers logs ont été affichés dans la console."
+          fi
+        else
+          whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
+        fi
+        ;;
+
+      restore)
+        choose_compose_source || true
+        setup_env
+        prompt_features
+        if restore_wizard; then
+          whi_info "Restauration" "Restauration terminée."
+        else
+          whi_info "Restauration" "Restauration annulée / échouée."
+        fi
+        ;;
+
+      status)
+        status_wizard || true
+        ;;
+
+      remove)
+        uninstall_wizard || true
+        # Important: on ne revient pas au menu après une désinstallation.
+        exit 0
+        ;;
+    esac
+  done
 }
 
 # N'exécute main que si le script est lancé directement.

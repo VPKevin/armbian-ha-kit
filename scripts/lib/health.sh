@@ -11,13 +11,26 @@ wait_for_health() {
   local start now
   start="$(date +%s)"
 
+  # Construit la liste des conteneurs attendus selon les features.
+  local expected=(ha-postgres homeassistant)
+  local enable_caddy="${ENABLE_CADDY:-}"
+
+  # Si le .env existe, on tente de lire ENABLE_CADDY depuis celui-ci.
+  if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ "${enable_caddy:-1}" == "1" || "${enable_caddy:-}" == "true" ]]; then
+    expected+=(ha-caddy)
+  fi
+
   while true; do
     local unhealthy=()
     local any_running=0
 
     # Liste tous les containers du projet (ceux du compose). On se base sur les noms fixés.
     # NB: si un container n'existe pas encore, on le considère comme non prêt.
-    for name in ha-postgres homeassistant ha-caddy; do
+    for name in "${expected[@]}"; do
       local state health
       state="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo "missing")"
       if [[ "$state" == "running" ]]; then
@@ -48,7 +61,7 @@ wait_for_health() {
         echo "Containers non healthy / non prêts:"
         printf '  - %s\n' "${unhealthy[@]}"
         echo
-        for name in ha-postgres homeassistant ha-caddy; do
+        for name in "${expected[@]}"; do
           echo "--- logs: $name (last 200) ---"
           docker logs --tail 200 "$name" 2>&1 || true
           echo
