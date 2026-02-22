@@ -314,7 +314,7 @@ EOF
             setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
             ;;
           usb)
-            setup_usb_backup || whi_info "USB" "Configuration USB annulée."
+            setup_usb_backup || true
             ;;
         esac
         ;;
@@ -432,7 +432,7 @@ main() {
         fi
 
         if whi_yesno "Backup" "Rendre accessible un repository restic sur un disque USB ?"; then
-          setup_usb_backup || whi_info "USB" "Configuration USB annulée."
+          setup_usb_backup || true
         fi
 
         # NOTE: la restauration est maintenant un choix explicite au menu principal.

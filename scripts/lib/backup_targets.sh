@@ -158,10 +158,24 @@ setup_usb_backup() {
   fi
 
   systemctl daemon-reload || true
-  mount "$mountpoint" || true
+
+  if ! mount "$mountpoint" 2>/tmp/ha-usb-mount.err; then
+    local err
+    err="$(tail -n 20 /tmp/ha-usb-mount.err 2>/dev/null | sed 's/^/  /' || true)"
+    whi_info "USB" "Échec du montage de $mountpoint.\n\nVérifie le format (exfat/ext4), et que la partition est correcte.\n\nErreur:\n${err}"
+    return 1
+  fi
 
   mkdir -p "$mountpoint/restic-ha"
-  add_repo "$mountpoint/restic-ha"
-  init_restic_repo "$mountpoint/restic-ha"
-}
 
+  add_repo "$mountpoint/restic-ha"
+  if ! init_restic_repo "$mountpoint/restic-ha" 2>/tmp/ha-usb-restic.err; then
+    local err
+    err="$(tail -n 30 /tmp/ha-usb-restic.err 2>/dev/null | sed 's/^/  /' || true)"
+    whi_info "USB" "Échec d'initialisation du repository Restic sur USB.\n\nRepo: $mountpoint/restic-ha\n\nErreur:\n${err}"
+    return 1
+  fi
+
+  whi_info "USB" "USB configurée.\n\nMount: $mountpoint\nRepo Restic: $mountpoint/restic-ha"
+  return 0
+}
