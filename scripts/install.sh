@@ -291,6 +291,124 @@ setup_compose_prereqs() {
   fi
 }
 
+show_summary_and_edit() {
+  local docker_subnet
+  docker_subnet="$(detect_docker_subnet)"
+
+  local repos="(aucun)"
+  if [[ -f "$RESTIC_REPOS" ]]; then
+    repos="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
+    [[ -n "$repos" ]] || repos="(aucun)"
+  fi
+
+  local restic_pass_status="absent"
+  if [[ -f "$RESTIC_PASS" ]]; then
+    restic_pass_status="présent (${RESTIC_PASS})"
+  fi
+
+  local samba_status="non"
+  if [[ -f "$SAMBA_CREDS" ]]; then
+    samba_status="oui (${SAMBA_CREDS})"
+  fi
+
+  local env_preview="(fichier absent)"
+  if [[ -f "$ENV_FILE" ]]; then
+    # Affiche sans secrets en clair
+    env_preview="$(
+      sed -E \
+        -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' \
+        "$ENV_FILE" 2>/dev/null || true
+    )"
+  fi
+
+  while true; do
+    local summary
+    summary=$(cat <<EOF
+Installation: ${STACK_DIR}
+
+.env (${ENV_FILE}):
+${env_preview}
+
+Home Assistant:
+  - config: ${STACK_DIR}/config
+  - configuration.yaml: ${STACK_DIR}/config/configuration.yaml
+  - trusted_proxies: ${docker_subnet}
+
+Postgres:
+  - data: ${STACK_DIR}/postgres
+  - port: 127.0.0.1:5432
+
+Restic:
+  - mot de passe: ${restic_pass_status}
+  - repos.conf: ${RESTIC_REPOS}
+  - repos:
+${repos}
+
+NAS SMB creds: ${samba_status}
+EOF
+)
+
+    if ! is_interactive_tty; then
+      echo "$summary" >&2
+      return 0
+    fi
+
+    local choice
+    choice=$(whiptail --title "Résumé" --menu "$summary
+
+Choisis une action :" 25 90 10 \
+      "ok" "Continuer" \
+      "edit-env" "Modifier POSTGRES_* (.env)" \
+      "restic-pass" "Redéfinir le mot de passe Restic" \
+      "nas" "Configurer / reconfigurer un NAS SMB (restic repo)" \
+      3>&1 1>&2 2>&3) || return 1
+
+    case "$choice" in
+      ok)
+        return 0
+        ;;
+      edit-env)
+        local pg_user pg_db pg_pass
+        pg_user="${POSTGRES_USER:-ha}"
+        pg_db="${POSTGRES_DB:-homeassistant}"
+
+        pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")"
+        pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")"
+        pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")"
+
+        # Réécrit le fichier .env
+        cat > "$ENV_FILE" <<EOF
+POSTGRES_USER=$pg_user
+POSTGRES_DB=$pg_db
+POSTGRES_PASSWORD=$pg_pass
+EOF
+        chmod 600 "$ENV_FILE"
+
+        # Recharge dans l'env du script
+        set -a
+        . "$ENV_FILE"
+        set +a
+
+        # Re-génère le bloc HA (ne réécrit pas si recorder existe déjà)
+        configure_homeassistant_yaml
+        ;;
+      restic-pass)
+        # Permet de re-lancer la définition du mot de passe
+        rm -f "$RESTIC_PASS"
+        setup_restic_password
+        ;;
+      nas)
+        setup_nas_smb
+        ;;
+    esac
+
+    # Met à jour l'aperçu pour l'itération suivante
+    if [[ -f "$ENV_FILE" ]]; then
+      env_preview="$(sed -E -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' "$ENV_FILE" 2>/dev/null || true)"
+    fi
+  done
+}
+
 main() {
   need_root
   ensure_dirs
@@ -310,6 +428,8 @@ main() {
   if whi_yesno "Backup" "Configurer un repository restic sur un NAS (SMB/CIFS) ?"; then
     setup_nas_smb
   fi
+
+  show_summary_and_edit
 
   whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose up -d" 12 70
 }

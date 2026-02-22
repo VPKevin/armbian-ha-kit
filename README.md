@@ -6,12 +6,25 @@ A reproducible, migratable Home Assistant installation for ARM boards running **
 
 ---
 
-## Quickstart (one-liner install)
+## Quickstart (installation interactive recommandée)
 
 > ⚠️ **Security note** — piping a remote script to `bash` is convenient but carries risk.
 > You cannot inspect the script before it runs. Mitigations:
 > - Download `bootstrap.sh`, review it, then run it.
 > - **Pin to a specific tag or commit SHA** (`--ref v1.0.0`) for reproducible installs.
+
+### Méthode recommandée (compatible `whiptail`)
+
+`install.sh` est interactif (UI texte via `whiptail`). Pour que les flèches / Oui-Non fonctionnent, il faut un vrai TTY.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh -o bootstrap.sh
+sudo bash bootstrap.sh
+```
+
+### One‑liner (à éviter si tu veux l’UI interactive)
+
+Le one‑liner ci-dessous peut casser l’interactivité (stdin n’est pas un terminal), selon ton environnement.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
@@ -20,8 +33,8 @@ curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstr
 
 **Pinned to a tag (recommended for production):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.0.0/bootstrap.sh \
-  | sudo bash -s -- --ref v1.0.0
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.0.0/bootstrap.sh -o bootstrap.sh
+sudo bash bootstrap.sh --ref v1.0.0
 ```
 
 `bootstrap.sh` will:
@@ -123,6 +136,14 @@ The wizard restores `config/` + `backup/`, restarts Postgres, re-imports the lat
 ---
 
 ## Troubleshooting
+
+### Whiptail affiche `^[[C` / impossible de naviguer (flèches)
+
+C’est un symptôme que le script est lancé **sans TTY** (souvent via `curl | sudo bash`, cron, ou un terminal qui ne fournit pas `/dev/tty`).
+
+Solutions :
+- Utiliser la méthode recommandée : télécharger puis exécuter `bootstrap.sh`.
+- Si tu passes par SSH, forcer un TTY : `ssh -t user@box 'sudo bash /srv/ha-stack/scripts/install.sh'`.
 
 ### HTTPS certificate not generated
 - DNS not pointing to your public IP → check `A`/`AAAA` records.
