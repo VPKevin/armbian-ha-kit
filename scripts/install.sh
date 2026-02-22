@@ -202,4 +202,5 @@ choose_usb_partition() {
     uuid="$(awk '{print $5}' <<<"$line")"
 
     [[ -z "$uuid" ]] && continue
-    choices+=("$name" "fs=$fstype size=$size mp=$p
+
+main "$@"
