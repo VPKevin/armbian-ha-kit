@@ -291,80 +291,103 @@ setup_compose_prereqs() {
   fi
 }
 
+setup_usb_backup() {
+  apt_install util-linux
+
+  local uuid
+  uuid="$(choose_usb_partition)" || return 1
+
+  local mountpoint
+  mountpoint="$(whi_input "USB" "Point de montage :" "/mnt/usbbackup")"
+
+  mkdir -p "$mountpoint"
+
+  # Évite les doublons
+  sed -i "\|$mountpoint|d" /etc/fstab
+  sed -i "\|UUID=$uuid|d" /etc/fstab
+
+  echo "UUID=$uuid  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
+
+  systemctl daemon-reload || true
+  mount "$mountpoint" || true
+
+  mkdir -p "$mountpoint/restic-ha"
+  add_repo "$mountpoint/restic-ha"
+  init_restic_repo "$mountpoint/restic-ha"
+}
+
 show_summary_and_edit() {
   local docker_subnet
   docker_subnet="$(detect_docker_subnet)"
 
-  local repos="(aucun)"
-  if [[ -f "$RESTIC_REPOS" ]]; then
-    repos="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
-    [[ -n "$repos" ]] || repos="(aucun)"
+  local repos_lines="  (aucun)"
+  if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
+    repos_lines="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
   fi
 
   local restic_pass_status="absent"
   if [[ -f "$RESTIC_PASS" ]]; then
-    restic_pass_status="présent (${RESTIC_PASS})"
+    restic_pass_status="présent: ${RESTIC_PASS}"
   fi
 
   local samba_status="non"
   if [[ -f "$SAMBA_CREDS" ]]; then
-    samba_status="oui (${SAMBA_CREDS})"
+    samba_status="oui: ${SAMBA_CREDS}"
   fi
 
-  local env_preview="(fichier absent)"
+  local usb_status="non"
+  if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
+    usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
+  fi
+
+  local env_preview="  (fichier absent)"
   if [[ -f "$ENV_FILE" ]]; then
-    # Affiche sans secrets en clair
-    env_preview="$(
-      sed -E \
-        -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' \
-        "$ENV_FILE" 2>/dev/null || true
-    )"
+    env_preview="$(sed -E -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' "$ENV_FILE" 2>/dev/null || true)"
+    env_preview="$(printf '%s\n' "$env_preview" | sed 's/^/  /')"
   fi
 
   while true; do
     local summary
     summary=$(cat <<EOF
-Installation: ${STACK_DIR}
+Installation : ${STACK_DIR}
 
-.env (${ENV_FILE}):
+.env : ${ENV_FILE}
 ${env_preview}
 
-Home Assistant:
-  - config: ${STACK_DIR}/config
-  - configuration.yaml: ${STACK_DIR}/config/configuration.yaml
-  - trusted_proxies: ${docker_subnet}
+Home Assistant
+  - config              : ${STACK_DIR}/config
+  - configuration.yaml  : ${STACK_DIR}/config/configuration.yaml
+  - trusted_proxies     : ${docker_subnet}
 
-Postgres:
-  - data: ${STACK_DIR}/postgres
-  - port: 127.0.0.1:5432
+Postgres
+  - data   : ${STACK_DIR}/postgres
+  - port   : 127.0.0.1:5432
 
-Restic:
-  - mot de passe: ${restic_pass_status}
-  - repos.conf: ${RESTIC_REPOS}
-  - repos:
-${repos}
+Restic
+  - mot de passe : ${restic_pass_status}
+  - repos.conf   : ${RESTIC_REPOS}
+  - repos :
+${repos_lines}
 
-NAS SMB creds: ${samba_status}
+Backups
+  - NAS SMB creds : ${samba_status}
+  - USB (physique): ${usb_status}
 EOF
 )
 
-    if ! is_interactive_tty; then
-      echo "$summary" >&2
-      return 0
-    fi
+    whiptail --title "Résumé" --msgbox "$summary" 28 92
 
-    local choice
-    choice=$(whiptail --title "Résumé" --menu "$summary
-
-Choisis une action :" 25 90 10 \
-      "ok" "Continuer" \
+    local action
+    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 18 78 10 \
+      "continuer" "Terminer l'installation" \
       "edit-env" "Modifier POSTGRES_* (.env)" \
       "restic-pass" "Redéfinir le mot de passe Restic" \
-      "nas" "Configurer / reconfigurer un NAS SMB (restic repo)" \
+      "nas" "Configurer / reconfigurer un NAS SMB" \
+      "usb" "Configurer / reconfigurer un disque USB" \
       3>&1 1>&2 2>&3) || return 1
 
-    case "$choice" in
-      ok)
+    case "$action" in
+      continuer)
         return 0
         ;;
       edit-env)
@@ -376,7 +399,6 @@ Choisis une action :" 25 90 10 \
         pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")"
         pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")"
 
-        # Réécrit le fichier .env
         cat > "$ENV_FILE" <<EOF
 POSTGRES_USER=$pg_user
 POSTGRES_DB=$pg_db
@@ -384,27 +406,45 @@ POSTGRES_PASSWORD=$pg_pass
 EOF
         chmod 600 "$ENV_FILE"
 
-        # Recharge dans l'env du script
         set -a
         . "$ENV_FILE"
         set +a
 
-        # Re-génère le bloc HA (ne réécrit pas si recorder existe déjà)
         configure_homeassistant_yaml
         ;;
       restic-pass)
-        # Permet de re-lancer la définition du mot de passe
         rm -f "$RESTIC_PASS"
         setup_restic_password
         ;;
       nas)
         setup_nas_smb
         ;;
+      usb)
+        setup_usb_backup
+        ;;
     esac
 
-    # Met à jour l'aperçu pour l'itération suivante
+    # refresh previews
     if [[ -f "$ENV_FILE" ]]; then
       env_preview="$(sed -E -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' "$ENV_FILE" 2>/dev/null || true)"
+      env_preview="$(printf '%s\n' "$env_preview" | sed 's/^/  /')"
+    fi
+
+    if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
+      repos_lines="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
+    else
+      repos_lines="  (aucun)"
+    fi
+
+    restic_pass_status="absent"
+    [[ -f "$RESTIC_PASS" ]] && restic_pass_status="présent: ${RESTIC_PASS}"
+
+    samba_status="non"
+    [[ -f "$SAMBA_CREDS" ]] && samba_status="oui: ${SAMBA_CREDS}"
+
+    usb_status="non"
+    if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
+      usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
     fi
   done
 }
@@ -427,6 +467,11 @@ main() {
   # Optionnel: config NAS
   if whi_yesno "Backup" "Configurer un repository restic sur un NAS (SMB/CIFS) ?"; then
     setup_nas_smb
+  fi
+
+  # Optionnel: config USB
+  if whi_yesno "Backup" "Configurer un repository restic sur un disque USB ?"; then
+    setup_usb_backup
   fi
 
   show_summary_and_edit
