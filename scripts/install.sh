@@ -28,6 +28,10 @@ source "${SCRIPT_DIR}/lib/restic.sh"
 source "${SCRIPT_DIR}/lib/backup_targets.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/systemd.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/health.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/uninstall.sh"
 
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
@@ -92,6 +96,7 @@ EOF
   # Charge les variables dans l’environnement du script
   # shellcheck disable=SC1090
   set -a
+  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 }
@@ -161,10 +166,11 @@ EOF
 
     local action
     action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 20 90 12 \
-      --ok-button "Valider" --cancel-button "Retour" \
+      --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
       "revoir" "Revoir ce résumé" \
       "finaliser" "Terminer l'installation" \
       "quit" "Quitter l'installation" \
+      "uninstall" "Tout désinstaller" \
       "edit-compose" "Changer le docker-compose utilisé" \
       "edit-env" "Compléter / modifier le .env (variables compose)" \
       "restic-pass" "Redéfinir le mot de passe Restic" \
@@ -196,6 +202,7 @@ EOF
         # Re-complète .env en fonction du nouveau compose
         env_ensure_from_compose "$COMPOSE_PATH" || true
         set -a
+        # shellcheck disable=SC1090
         . "$ENV_FILE" 2>/dev/null || true
         set +a
         configure_homeassistant_yaml
@@ -217,6 +224,7 @@ EOF
         if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
 
         set -a
+        # shellcheck disable=SC1090
         . "$ENV_FILE" 2>/dev/null || true
         set +a
 
@@ -234,6 +242,9 @@ EOF
         ;;
       usb)
         setup_usb_backup || whi_info "USB" "Configuration USB annulée."
+        ;;
+      uninstall)
+        uninstall_wizard || true
         ;;
     esac
 
@@ -304,7 +315,11 @@ main() {
   fi
 
   if start_stack; then
-    whi_info "Installation" "Installation terminée.\n\nStack démarrée.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
+    if wait_for_health 240; then
+      whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
+    else
+      whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nLes derniers logs ont été affichés dans la console."
+    fi
   else
     whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
   fi

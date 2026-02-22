@@ -82,6 +82,7 @@ env_ensure_from_compose() {
 
   # shellcheck disable=SC1090
   set -a
+  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 
@@ -101,7 +102,7 @@ env_ensure_from_compose() {
 
   # shellcheck disable=SC1090
   set -a
+  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 }
-
