@@ -52,7 +52,14 @@ req_bin() { command -v "$1" >/dev/null 2>&1; }
 
 apt_install() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
+
+  # Évite de faire `apt-get update` à chaque interaction. On le fait une fois par run
+  # (ou si l'index est ancien/absent) pour limiter le bruit et accélérer.
+  local stamp="/var/lib/apt/periodic/update-success-stamp"
+  if [[ ! -f "$stamp" ]] || find "$stamp" -mmin +60 >/dev/null 2>&1; then
+    apt-get update -y
+  fi
+
   apt-get install -y "$@"
 }
 
@@ -141,13 +148,18 @@ prompt_features() {
   fi
 
   # 3) UPnP (après le choix proxy)
-  if [[ $default_upnp -eq 1 ]]; then
-    if ! whi_yesno "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement."; then
-      enable_upnp=0
-    fi
+  # Si un proxy externe est utilisé, UPnP n'a généralement aucun intérêt et peut être source d'ouverture de ports inutile.
+  if [[ $has_external_proxy -eq 1 ]]; then
+    enable_upnp=0
   else
-    if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non."; then
-      enable_upnp=1
+    if [[ $default_upnp -eq 1 ]]; then
+      if ! whi_yesno "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement."; then
+        enable_upnp=0
+      fi
+    else
+      if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non."; then
+        enable_upnp=1
+      fi
     fi
   fi
 

@@ -45,8 +45,27 @@ env_set_kv() {
   touch "$file"
   chmod 600 "$file" || true
 
+  # Mise à jour idempotente et robuste: on remplace la première occurrence de KEY=...
+  # sans dépendre d'extensions sed (et sans risques si la clé/valeur contient des caractères spéciaux).
   if env_has_key "$key" "$file"; then
-    sed -i "0,/^[[:space:]]*${key}=/{s|^[[:space:]]*${key}=.*|${key}=${value}|}" "$file"
+    local tmp
+    tmp="$(mktemp)"
+    awk -v k="$key" -v v="$value" '
+      BEGIN{done=0}
+      {
+        if (!done && $0 ~ "^[[:space:]]*"k"=") {
+          print k"="v
+          done=1
+          next
+        }
+        print
+      }
+      END{
+        if(!done){ print k"="v }
+      }
+    ' "$file" >"$tmp"
+    cat "$tmp" >"$file"
+    rm -f "$tmp"
   else
     printf "%s=%s\n" "$key" "$value" >> "$file"
   fi
