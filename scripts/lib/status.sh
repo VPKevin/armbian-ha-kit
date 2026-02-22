@@ -46,7 +46,7 @@ status_wizard() {
 
   local compose_ps="(docker/compose indisponible ou stack non démarrée)"
   if command -v docker >/dev/null 2>&1 && [[ -d "$stack_dir" ]] && [[ -f "$compose_path" ]]; then
-    compose_ps="$(cd "$stack_dir" && docker compose -f "$compose_path" ps 2>&1 || true)"
+    compose_ps="$({ cd "$stack_dir" && docker compose -f "$compose_path" ps 2>&1; } || true)"
   fi
 
   local msg
