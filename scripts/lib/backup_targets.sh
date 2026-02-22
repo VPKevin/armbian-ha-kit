@@ -3,6 +3,21 @@ set -euo pipefail
 
 # NAS SMB + USB setup (montage + ajout repo restic).
 
+fstab_remove_matching() {
+  # Supprime de /etc/fstab les lignes qui matchent un pattern regex (ERE) de façon robuste.
+  # On évite `sed -i` sur des patterns non échappés (cause typique de "unterminated address regex").
+  local pattern="$1"
+  local fstab="/etc/fstab"
+
+  [[ -f "$fstab" ]] || return 0
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -v re="$pattern" 'BEGIN{removed=0} $0 ~ re {removed=1; next} {print} END{exit 0}' "$fstab" >"$tmp"
+  cat "$tmp" >"$fstab"
+  rm -f "$tmp"
+}
+
 setup_nas_smb() {
   apt_install cifs-utils
 
@@ -27,7 +42,8 @@ EOF
   local remote="//$server/$share"
   local opts="credentials=$SAMBA_CREDS,iocharset=utf8,uid=0,gid=0,file_mode=0600,dir_mode=0700,nofail,x-systemd.automount"
 
-  sed -i "\|$mountpoint|d" /etc/fstab
+  # Supprime les anciennes entrées sur ce mountpoint
+  fstab_remove_matching "[[:space:]]${mountpoint//\//\\/}[[:space:]]" || true
 
   echo "$remote  $mountpoint  cifs  $opts  0  0" >> /etc/fstab
 
@@ -146,14 +162,15 @@ setup_usb_backup() {
 
   mkdir -p "$mountpoint"
 
-  sed -i "\|$mountpoint|d" /etc/fstab
+  # Nettoyage fstab sur mountpoint
+  fstab_remove_matching "[[:space:]]${mountpoint//\//\\/}[[:space:]]" || true
 
   # Si l'utilisateur a choisi un UUID => on persiste en UUID. Sinon on persiste via le PATH.
   if [[ "$id" =~ ^[0-9A-Fa-f-]{4,}$ ]]; then
-    sed -i "\|UUID=$id|d" /etc/fstab
+    fstab_remove_matching "^UUID=${id}[[:space:]]" || true
     echo "UUID=$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   else
-    sed -i "\|^${id}[[:space:]]|d" /etc/fstab
+    fstab_remove_matching "^${id//\//\\/}[[:space:]]" || true
     echo "$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   fi
 

@@ -105,139 +105,72 @@ compose_ps_compact() {
 
 status_wizard() {
   local stack_dir="${STACK_DIR:-/srv/ha-stack}"
-  local compose_path="${COMPOSE_PATH:-${stack_dir}/docker-compose.yml}"
   local env_file="${ENV_FILE:-${stack_dir}/.env}"
 
-  local compose_present="non"
-  [[ -f "$compose_path" ]] && compose_present="oui"
+  while true; do
+    local action
+    action=$(whiptail --title "Status" --menu "Que veux-tu faire ?" 18 88 10 \
+      --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
+      "view" "Afficher le status" \
+      "backup" "Configurer / modifier les sauvegardes (NAS/USB, Restic, timer)" \
+      "caddy" "Configurer Caddy (domaine/email)" \
+      "quit" "Retour" \
+      3>&1 1>&2 2>&3) || return 0
 
-  local env_present="non"
-  [[ -f "$env_file" ]] && env_present="oui"
-
-  local any_project_artifact=0
-  [[ -f "$compose_path" || -f "$env_file" || -f "${stack_dir}/config/configuration.yaml" ]] && any_project_artifact=1
-
-  local any_runtime=0
-  if command -v docker >/dev/null 2>&1; then
-    docker inspect ha-postgres >/dev/null 2>&1 && any_runtime=1
-    docker inspect homeassistant >/dev/null 2>&1 && any_runtime=1
-    docker inspect ha-caddy >/dev/null 2>&1 && any_runtime=1
-  fi
-  if systemctl list-unit-files 2>/dev/null | grep -q '^ha-backup\.timer'; then
-    any_runtime=1
-  fi
-
-  local installed="non"
-  if [[ -d "$stack_dir" && $any_project_artifact -eq 1 && $any_runtime -eq 1 ]]; then
-    installed="oui"
-  fi
-
-  local enable_caddy_raw=""
-  local enable_upnp_raw=""
-  if [[ -f "$env_file" ]]; then
-    enable_caddy_raw="$(env_get "ENABLE_CADDY" "$env_file" 2>/dev/null || true)"
-    enable_upnp_raw="$(env_get "ENABLE_UPNP" "$env_file" 2>/dev/null || true)"
-  fi
-
-  # Fallback: si les flags ne sont pas dans le .env, on déduit depuis l'état docker.
-  if [[ -z "${enable_caddy_raw:-}" ]] && command -v docker >/dev/null 2>&1; then
-    if docker inspect ha-caddy >/dev/null 2>&1; then
-      enable_caddy_raw="1"
-    else
-      enable_caddy_raw="0"
-    fi
-  fi
-
-  local caddy_enabled
-  caddy_enabled="$(fmt_bool_default_no "$enable_caddy_raw")"
-  local upnp_enabled
-  upnp_enabled="$(fmt_bool_default_no "$enable_upnp_raw")"
-
-  local timer_status="absent"
-  if systemctl list-unit-files 2>/dev/null | grep -q '^ha-backup\.timer'; then
-    timer_status="$(systemctl is-enabled ha-backup.timer 2>/dev/null || true) / $(systemctl is-active ha-backup.timer 2>/dev/null || true)"
-  fi
-
-  local docker_status="absent"
-  if command -v docker >/dev/null 2>&1; then
-    docker_status="ok"
-  fi
-
-  # Backup / Restic: si aucun repo, on considère désactivé.
-  local repos_conf="${stack_dir}/restic/repos.conf"
-  local passfile="${stack_dir}/restic/password"
-
-  local backup_enabled="non"
-  local repos_info=""
-  local last_restic="-"
-  if [[ -f "$repos_conf" ]]; then
-    local repo_count
-    repo_count="$(grep -Evc '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null || echo 0)"
-    if [[ "${repo_count:-0}" -gt 0 ]]; then
-      backup_enabled="oui"
-      repos_info="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 2 | sed 's/^/  - /')"
-
-      if [[ -f "$passfile" ]]; then
-        local first_repo
-        first_repo="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 1 || true)"
-        if [[ -n "${first_repo:-}" ]]; then
-          last_restic="$(get_last_restic_snapshot "$first_repo" "$passfile" 2>/dev/null || echo "-")"
+    case "$action" in
+      quit)
+        return 0
+        ;;
+      caddy)
+        # appelle le wizard d'install pour la partie caddy si disponible
+        if command -v bash >/dev/null 2>&1 && [[ -f "${stack_dir}/scripts/install.sh" ]]; then
+          bash "${stack_dir}/scripts/install.sh" || true
         fi
-      fi
-    fi
-  fi
+        ;;
+      backup)
+        # On charge les libs si pas déjà chargées (status.sh est sourcé par install.sh, mais peut être utilisé isolément).
+        if [[ -f "${stack_dir}/scripts/lib/restic.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/restic.sh" || true
+        fi
+        if [[ -f "${stack_dir}/scripts/lib/backup_targets.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/backup_targets.sh" || true
+        fi
+        if [[ -f "${stack_dir}/scripts/lib/systemd.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/systemd.sh" || true
+        fi
 
-  # Backup infos (local dump)
-  local last_local="-"
-  last_local="$(get_last_backup_local "${stack_dir}/backup" 2>/dev/null || echo "-")"
+        # Assure que les chemins globaux sont cohérents (utilisés par les fonctions des libs sourcées)
+        export STACK_DIR="$stack_dir"
+        export ENV_FILE="$env_file"
+        export RESTIC_DIR="${stack_dir}/restic"
+        export RESTIC_REPOS="${RESTIC_DIR}/repos.conf"
+        export RESTIC_PASS="${RESTIC_DIR}/password"
 
-  # docker compose ps compact
-  local compose_ps
-  compose_ps="(docker/compose indisponible ou stack non démarrée)"
-  if command -v docker >/dev/null 2>&1 && [[ -d "$stack_dir" ]] && [[ -f "$compose_path" ]]; then
-    if compose_ps="$(compose_ps_compact "$stack_dir" "$compose_path" 2>/dev/null)"; then
-      :
-    else
-      compose_ps="$({ cd "$stack_dir" && docker compose -f "$compose_path" ps 2>&1; } || true)"
-    fi
-  fi
+        # Mot de passe restic + timer
+        if [[ -f "${stack_dir}/scripts/install.sh" ]]; then
+          # On réutilise la logique existante (setup_restic_password + setup_systemd_backup)
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/install.sh" || true
+          setup_restic_password || true
+          setup_systemd_backup || true
+        fi
 
-  local sauvegardes_block
-  if [[ "$backup_enabled" == "non" ]]; then
-    sauvegardes_block="  - Restic : désactivé (aucun repo NAS/USB)"
-  else
-    sauvegardes_block=$(cat <<EOF
-  - Restic : activé
-  - Dernier dump local (backup/) : ${last_local}
-  - Repos Restic (repos.conf) :
-${repos_info}
-  - Dernier snapshot Restic (1er repo) : ${last_restic}
-EOF
-)
-  fi
+        if whi_yesno "Backup" "Configurer / reconfigurer un NAS SMB (repository Restic) ?"; then
+          setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+        fi
 
-  local msg
-  msg="$(cat <<EOF
-Stack installée : ${installed}
-STACK_DIR       : ${stack_dir}
-Compose présent : ${compose_present}
-.env présent    : ${env_present}
+        if whi_yesno "Backup" "Configurer / reconfigurer un disque USB (repository Restic) ?"; then
+          setup_usb_backup || true
+        fi
+        ;;
+      view|*)
+        break
+        ;;
+    esac
+  done
 
-Fonctionnalités
-  - Caddy/Proxy : ${caddy_enabled}
-  - UPnP        : ${upnp_enabled}
-
-Sauvegardes
-  - Timer systemd : ${timer_status}
-${sauvegardes_block}
-
-Docker : ${docker_status}
-
-Containers (résumé):
-${compose_ps}
-EOF
-)"
-
-  whiptail --title "Status" --msgbox "$msg" 32 100 --ok-button "$(t OK)"
+  # ...existing code...
 }
-
