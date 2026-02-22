@@ -6,6 +6,7 @@
 /postgres/
 /backup/
 /caddy/
+/restic/
 /secrets/
 /tmp/
 /mnt/
