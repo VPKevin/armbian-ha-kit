@@ -259,7 +259,9 @@ main() {
   ensure_dirs
 
   # deps minimales pour l’install
-  apt_install whiptail awk sed coreutils util-linux ca-certificates
+  # NOTE: sur Debian trixie, `awk` est un paquet *virtuel* -> installer une implémentation.
+  apt_install whiptail sed coreutils util-linux ca-certificates
+  apt_install mawk || apt_install gawk
 
   setup_compose_prereqs
   setup_env
