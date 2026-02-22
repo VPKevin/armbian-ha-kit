@@ -9,6 +9,13 @@ sanitize_env_value() {
   echo "$v"
 }
 
+whi_escape() {
+  # whiptail interprète certains caractères. On neutralise le plus problématique.
+  local s="$1"
+  s="${s//=/\=}"
+  echo "$s"
+}
+
 env_get() {
   local key="$1" file="$2"
   [[ -f "$file" ]] || return 1
@@ -96,7 +103,7 @@ env_ensure_from_compose() {
     [[ -n "${def:-}" ]] && default="$def"
 
     local val
-    val="$(whi_input "Variables Compose" "$name (manquant dans .env)" "$default")" || return 1
+    val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return 1
     env_set_kv "$name" "$val" "$ENV_FILE"
   done <<< "$vars"
 

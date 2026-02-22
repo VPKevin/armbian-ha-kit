@@ -12,6 +12,15 @@ fmt_bool() {
   esac
 }
 
+fmt_bool_default_no() {
+  local v="${1:-}"
+  case "$v" in
+    1|true|yes|oui|on) echo "oui" ;;
+    0|false|no|non|off|'') echo "non" ;;
+    *) echo "non" ;;
+  esac
+}
+
 get_last_backup_local() {
   local backup_dir="$1"
   [[ -d "$backup_dir" ]] || return 1
@@ -55,25 +64,33 @@ compose_ps_compact() {
   command -v docker >/dev/null 2>&1 || return 1
   [[ -d "$stack_dir" && -f "$compose_path" ]] || return 1
 
-  # Format: name|state|health|ports
-  (cd "$stack_dir" && docker compose -f "$compose_path" ps --format json 2>/dev/null) \
-    | awk '
-      BEGIN{print "NAME\tSTATE\tHEALTH\tPORTS"}
-      /"Name"/ {name=$0; sub(/.*"Name"[[:space:]]*:[[:space:]]*"/ ,"",name); sub(/".*/,"",name)}
-      /"State"/ {state=$0; sub(/.*"State"[[:space:]]*:[[:space:]]*"/ ,"",state); sub(/".*/,"",state)}
-      /"Health"/ {health=$0; sub(/.*"Health"[[:space:]]*:[[:space:]]*"/ ,"",health); sub(/".*/,"",health)}
-      /"Publishers"/ {ports=""}
-      /"URL"/ {
-        u=$0; sub(/.*"URL"[[:space:]]*:[[:space:]]*"/,"",u); sub(/".*/,"",u);
-        if (u!="") { if (ports!="") ports=ports","; ports=ports u }
-      }
-      /}\s*,?\s*$/ && name!="" && state!="" {
-        if (health=="") health="-";
-        if (ports=="") ports="-";
-        print name"\t"state"\t"health"\t"ports;
-        name=state=health=ports="";
-      }
-    '
+  local rows
+  rows="$({ cd "$stack_dir" && docker compose -f "$compose_path" ps --format json 2>/dev/null; } || true)"
+  [[ -n "${rows:-}" ]] || return 1
+
+  # Parse JSON multi-line avec awk (pas de jq dans l'image de tests)
+  # Sortie en colonnes fixes.
+  echo "$rows" | awk '
+    function pad(s,w){return sprintf("%-"w"s", s)}
+    BEGIN{
+      w1=16; w2=10; w3=10;
+      print pad("NAME",w1)" "pad("STATE",w2)" "pad("HEALTH",w3)" PORTS"
+    }
+    /"Name"/ {name=$0; sub(/.*"Name"[[:space:]]*:[[:space:]]*"/ ,"",name); sub(/".*/,"",name)}
+    /"State"/ {state=$0; sub(/.*"State"[[:space:]]*:[[:space:]]*"/ ,"",state); sub(/".*/,"",state)}
+    /"Health"/ {health=$0; sub(/.*"Health"[[:space:]]*:[[:space:]]*"/ ,"",health); sub(/".*/,"",health)}
+    /"Publishers"/ {ports=""}
+    /"URL"/ {
+      u=$0; sub(/.*"URL"[[:space:]]*:[[:space:]]*"/,"",u); sub(/".*/,"",u);
+      if (u!="") { if (ports!="") ports=ports","; ports=ports u }
+    }
+    /}\s*,?\s*$/ && name!="" && state!="" {
+      if (health=="") health="-";
+      if (ports=="") ports="-";
+      print pad(name,w1)" "pad(state,w2)" "pad(health,w3)" "ports;
+      name=state=health=ports="";
+    }
+  '
 }
 
 status_wizard() {
@@ -116,13 +133,15 @@ status_wizard() {
   if [[ -z "${enable_caddy_raw:-}" ]] && command -v docker >/dev/null 2>&1; then
     if docker inspect ha-caddy >/dev/null 2>&1; then
       enable_caddy_raw="1"
+    else
+      enable_caddy_raw="0"
     fi
   fi
 
   local caddy_enabled
-  caddy_enabled="$(fmt_bool "$enable_caddy_raw")"
+  caddy_enabled="$(fmt_bool_default_no "$enable_caddy_raw")"
   local upnp_enabled
-  upnp_enabled="$(fmt_bool "$enable_upnp_raw")"
+  upnp_enabled="$(fmt_bool_default_no "$enable_upnp_raw")"
 
   local timer_status="absent"
   if systemctl list-unit-files 2>/dev/null | grep -q '^ha-backup\.timer'; then
@@ -134,27 +153,33 @@ status_wizard() {
     docker_status="ok"
   fi
 
-  # Backup infos
-  local last_local="-"
-  last_local="$(get_last_backup_local "${stack_dir}/backup" 2>/dev/null || echo "-")"
-
-  local repos_info="-"
-  local last_restic="-"
+  # Backup / Restic: si aucun repo, on considère désactivé.
   local repos_conf="${stack_dir}/restic/repos.conf"
   local passfile="${stack_dir}/restic/password"
 
-  if [[ -f "$repos_conf" && -s "$repos_conf" ]]; then
-    repos_info="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 2 | sed 's/^/  - /')"
+  local backup_enabled="non"
+  local repos_info=""
+  local last_restic="-"
+  if [[ -f "$repos_conf" ]]; then
+    local repo_count
+    repo_count="$(grep -Evc '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null || echo 0)"
+    if [[ "${repo_count:-0}" -gt 0 ]]; then
+      backup_enabled="oui"
+      repos_info="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 2 | sed 's/^/  - /')"
 
-    # On essaie de donner une date de dernier snapshot sur le 1er repo (rapide, lisible).
-    if [[ -f "$passfile" ]]; then
-      local first_repo
-      first_repo="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 1 || true)"
-      if [[ -n "${first_repo:-}" ]]; then
-        last_restic="$(get_last_restic_snapshot "$first_repo" "$passfile" 2>/dev/null || echo "-")"
+      if [[ -f "$passfile" ]]; then
+        local first_repo
+        first_repo="$(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' "$repos_conf" 2>/dev/null | head -n 1 || true)"
+        if [[ -n "${first_repo:-}" ]]; then
+          last_restic="$(get_last_restic_snapshot "$first_repo" "$passfile" 2>/dev/null || echo "-")"
+        fi
       fi
     fi
   fi
+
+  # Backup infos (local dump)
+  local last_local="-"
+  last_local="$(get_last_backup_local "${stack_dir}/backup" 2>/dev/null || echo "-")"
 
   # docker compose ps compact
   local compose_ps
@@ -165,6 +190,20 @@ status_wizard() {
     else
       compose_ps="$({ cd "$stack_dir" && docker compose -f "$compose_path" ps 2>&1; } || true)"
     fi
+  fi
+
+  local sauvegardes_block
+  if [[ "$backup_enabled" == "non" ]]; then
+    sauvegardes_block="  - Restic : désactivé (aucun repo NAS/USB)"
+  else
+    sauvegardes_block=$(cat <<EOF
+  - Restic : activé
+  - Dernier dump local (backup/) : ${last_local}
+  - Repos Restic (repos.conf) :
+${repos_info}
+  - Dernier snapshot Restic (1er repo) : ${last_restic}
+EOF
+)
   fi
 
   local msg
@@ -179,11 +218,8 @@ Fonctionnalités
   - UPnP        : ${upnp_enabled}
 
 Sauvegardes
-  - Timer systemd   : ${timer_status}
-  - Dernier dump local (backup/) : ${last_local}
-  - Repos Restic (repos.conf) :
-${repos_info}
-  - Dernier snapshot Restic (1er repo) : ${last_restic}
+  - Timer systemd : ${timer_status}
+${sauvegardes_block}
 
 Docker : ${docker_status}
 

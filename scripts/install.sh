@@ -234,22 +234,15 @@ EOF
     whiptail --title "Résumé" --msgbox "$summary" 30 96 --ok-button "OK"
 
     local action
-    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 20 90 12 \
+    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 18 90 10 \
       --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-      "revoir" "Revoir ce résumé" \
       "finaliser" "Terminer l'installation" \
+      "revoir" "Revoir ce résumé" \
+      "edit" "Modifier la configuration" \
       "quit" "Quitter l'installation" \
-      "uninstall" "Tout désinstaller" \
-      "edit-compose" "Changer le docker-compose utilisé" \
-      "edit-env" "Compléter / modifier le .env (variables compose)" \
-      "restic-pass" "Redéfinir le mot de passe Restic" \
-      "restore" "Restaurer un backup Restic" \
-      "nas" "Configurer / reconfigurer un NAS SMB" \
-      "usb" "Configurer / reconfigurer un disque USB" \
       3>&1 1>&2 2>&3)
 
     if [[ -z "${action:-}" ]]; then
-      # Retour => revient au menu (donc permet de "rester" sans finaliser)
       continue
     fi
 
@@ -266,54 +259,64 @@ EOF
         fi
         continue
         ;;
-      edit-compose)
-        choose_compose_source || true
-        # Re-complète .env en fonction du nouveau compose
-        env_ensure_from_compose "$COMPOSE_PATH" || true
-        set -a
-        # shellcheck disable=SC1090
-        . "$ENV_FILE" 2>/dev/null || true
-        set +a
-        configure_homeassistant_yaml
-        ;;
-      edit-env)
-        # Complète d'abord depuis compose, puis options Postgres (historique)
-        env_ensure_from_compose "$COMPOSE_PATH" || true
+      edit)
+        local edit_action
+        edit_action=$(whiptail --title "Configuration" --menu "Que veux-tu modifier ?" 20 92 12 \
+          --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
+          "edit-compose" "Changer le docker-compose utilisé" \
+          "edit-env" "Compléter / modifier le .env (variables compose)" \
+          "caddy" "Domaine + email (Caddy)" \
+          "restic-pass" "Redéfinir le mot de passe Restic" \
+          "nas" "Configurer / reconfigurer un NAS SMB" \
+          "usb" "Configurer / reconfigurer un disque USB" \
+          3>&1 1>&2 2>&3) || continue
 
-        local pg_user pg_db pg_pass
-        pg_user="${POSTGRES_USER:-ha}"
-        pg_db="${POSTGRES_DB:-homeassistant}"
+        case "$edit_action" in
+          edit-compose)
+            choose_compose_source || true
+            env_ensure_from_compose "$COMPOSE_PATH" || true
+            set -a
+            # shellcheck disable=SC1090
+            . "$ENV_FILE" 2>/dev/null || true
+            set +a
+            configure_homeassistant_yaml
+            ;;
+          edit-env)
+            env_ensure_from_compose "$COMPOSE_PATH" || true
 
-        pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
-        pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
-        pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
+            local pg_user pg_db pg_pass
+            pg_user="${POSTGRES_USER:-ha}"
+            pg_db="${POSTGRES_DB:-homeassistant}"
 
-        if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
-        if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
-        if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
+            pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
+            pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
+            pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
 
-        set -a
-        # shellcheck disable=SC1090
-        . "$ENV_FILE" 2>/dev/null || true
-        set +a
+            if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
+            if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
+            if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
 
-        configure_homeassistant_yaml
-        ;;
-      restic-pass)
-        rm -f "$RESTIC_PASS"
-        setup_restic_password
-        ;;
-      restore)
-        restore_wizard || whi_info "Restauration" "Restauration annulée / échouée."
-        ;;
-      nas)
-        setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
-        ;;
-      usb)
-        setup_usb_backup || whi_info "USB" "Configuration USB annulée."
-        ;;
-      uninstall)
-        uninstall_wizard || true
+            set -a
+            # shellcheck disable=SC1090
+            . "$ENV_FILE" 2>/dev/null || true
+            set +a
+
+            configure_homeassistant_yaml
+            ;;
+          caddy)
+            prompt_caddy_domain || true
+            ;;
+          restic-pass)
+            rm -f "$RESTIC_PASS"
+            setup_restic_password
+            ;;
+          nas)
+            setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+            ;;
+          usb)
+            setup_usb_backup || whi_info "USB" "Configuration USB annulée."
+            ;;
+        esac
         ;;
     esac
 
