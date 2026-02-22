@@ -12,6 +12,73 @@ SAMBA_CREDS="/etc/samba/creds-ha"
 DEFAULT_COMPOSE_PATH="${STACK_DIR}/docker-compose.yml"
 COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"
 
+# --- i18n (FR/EN) ---------------------------------------------------------
+
+detect_lang() {
+  # Langue basée sur la locale OS. Fallback: fr.
+  local l="${LC_ALL:-${LANG:-}}"
+  l="${l,,}"
+  if [[ "$l" == en* ]]; then
+    echo "en"
+  else
+    echo "fr"
+  fi
+}
+
+UI_LANG="$(detect_lang)"
+
+# Traductions minimalistes. Usage: t key
+# shellcheck disable=SC2034
+TXT_INSTALL_SUMMARY_fr="Résumé"
+TXT_INSTALL_SUMMARY_en="Summary"
+
+# shellcheck disable=SC2034
+TXT_OK_fr="OK"
+TXT_OK_en="OK"
+
+# shellcheck disable=SC2034
+TXT_VALIDATE_fr="Valider"
+TXT_VALIDATE_en="OK"
+
+# shellcheck disable=SC2034
+TXT_BACK_fr="Retour"
+TXT_BACK_en="Back"
+
+# shellcheck disable=SC2034
+TXT_YES_fr="Oui"
+TXT_YES_en="Yes"
+
+# shellcheck disable=SC2034
+TXT_NO_fr="Non"
+TXT_NO_en="No"
+
+# shellcheck disable=SC2034
+TXT_EXIT_INSTALL_fr="Quitter l'installation"
+TXT_EXIT_INSTALL_en="Exit installation"
+
+# shellcheck disable=SC2034
+TXT_FINISH_INSTALL_fr="Terminer l'installation"
+TXT_FINISH_INSTALL_en="Finish installation"
+
+# shellcheck disable=SC2034
+TXT_REVIEW_SUMMARY_fr="Revoir ce résumé"
+TXT_REVIEW_SUMMARY_en="Review this summary"
+
+# shellcheck disable=SC2034
+TXT_WHAT_DO_fr="Que veux-tu faire ?"
+TXT_WHAT_DO_en="What do you want to do?"
+
+t() {
+  local key="$1"
+  local var="TXT_${key}_${UI_LANG}"
+  # indirect expansion; retourne key si non trouvé
+  if [[ -n "${!var:-}" ]]; then
+    printf "%s" "${!var}"
+  else
+    printf "%s" "$key"
+  fi
+}
+
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Run as root: sudo bash $0"
@@ -36,31 +103,83 @@ apt_install() {
 whi_input() {
   local title="$1" prompt="$2" default="${3:-}"
   whiptail --title "$title" --inputbox "$prompt" 10 70 "$default" \
-    --ok-button "Valider" --cancel-button "Retour" 3>&1 1>&2 2>&3
+    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" 3>&1 1>&2 2>&3
 }
 
 whi_pass() {
   local title="$1" prompt="$2"
   whiptail --title "$title" --passwordbox "$prompt" 10 70 \
-    --ok-button "Valider" --cancel-button "Retour" 3>&1 1>&2 2>&3
+    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" 3>&1 1>&2 2>&3
 }
 
 whi_yesno() {
   local title="$1" prompt="$2"
   whiptail --title "$title" --yesno "$prompt" 10 70 \
-    --yes-button "Oui" --no-button "Non"
+    --yes-button "$(t YES)" --no-button "$(t NO)"
 }
 
 # Petit helper: affiche une info avec "OK"
 whi_info() {
   local title="$1" msg="$2"
-  whiptail --title "$title" --msgbox "$msg" 12 80 --ok-button "OK"
+  whiptail --title "$title" --msgbox "$msg" 12 80 --ok-button "$(t OK)"
 }
 
 whi_confirm() {
   local title="$1" prompt="$2"
   whiptail --title "$title" --yesno "$prompt" 10 70 \
-    --yes-button "Oui" --no-button "Non"
+    --yes-button "$(t YES)" --no-button "$(t NO)"
+}
+
+# --- missing helpers (régression fix) ------------------------------------
+
+write_file_if_missing() {
+  local path="$1"
+  local content="$2"
+  if [[ ! -f "$path" ]]; then
+    printf "%s\n" "$content" > "$path"
+  fi
+}
+
+detect_docker_subnet() {
+  # Retourne le subnet du bridge docker, sinon fallback large
+  local subnet
+  subnet="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null || true)"
+  if [[ -n "$subnet" ]]; then
+    echo "$subnet"
+  else
+    echo "172.16.0.0/12"
+  fi
+}
+
+configure_homeassistant_yaml() {
+  local cfg="${STACK_DIR}/config/configuration.yaml"
+  local subnet
+  subnet="$(detect_docker_subnet)"
+
+  if [[ ! -f "$cfg" ]]; then
+    touch "$cfg"
+    chown root:root "$cfg" || true
+    chmod 600 "$cfg" || true
+  fi
+
+  # Assure la présence des variables Postgres (set -u => sinon "unbound variable")
+  : "${POSTGRES_USER:=ha}"
+  : "${POSTGRES_DB:=homeassistant}"
+  : "${POSTGRES_PASSWORD:=changeme}"
+
+  # Ajoute un bloc minimal si pas déjà présent (sans écraser le reste)
+  if ! grep -q "^recorder:" "$cfg"; then
+    cat >> "$cfg" <<EOF
+
+recorder:
+  db_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
+
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - ${subnet}
+EOF
+  fi
 }
 
 is_interactive_tty() {
