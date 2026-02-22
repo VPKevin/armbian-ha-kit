@@ -345,6 +345,15 @@ EOF
   done
 }
 
+strip_env_prefix() {
+  local key="$1" val="$2"
+  if [[ "${val:-}" == "${key}="* ]]; then
+    echo "${val#"${key}"=}"
+  else
+    echo "$val"
+  fi
+}
+
 prompt_caddy_domain() {
   # Demande uniquement si Caddy est activé.
   local enable_caddy="${ENABLE_CADDY:-}"
@@ -360,8 +369,16 @@ prompt_caddy_domain() {
   ha_domain="$(env_get "HA_DOMAIN" "$ENV_FILE" 2>/dev/null || true)"
   le_email="$(env_get "LE_EMAIL" "$ENV_FILE" 2>/dev/null || true)"
 
+  # Auto-nettoyage si un ancien run a stocké une valeur polluée.
+  ha_domain="$(strip_env_prefix "HA_DOMAIN" "$ha_domain")"
+  le_email="$(strip_env_prefix "LE_EMAIL" "$le_email")"
+
   ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return 1
   le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return 1
+
+  # Si l'utilisateur a collé 'HA_DOMAIN=...' on nettoie aussi.
+  ha_domain="$(strip_env_prefix "HA_DOMAIN" "$ha_domain")"
+  le_email="$(strip_env_prefix "LE_EMAIL" "$le_email")"
 
   if [[ -z "${ha_domain:-}" || -z "${le_email:-}" ]]; then
     whi_info "Caddy" "Domaine et email sont requis si Caddy est activé."

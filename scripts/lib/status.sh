@@ -59,38 +59,48 @@ get_last_restic_snapshot() {
     | awk 'NR>2 && $1 ~ /^[0-9a-f]+$/ {print $2" "$3" "$4" "$5; exit}'
 }
 
+docker_ports_for_container() {
+  local name="$1"
+  command -v docker >/dev/null 2>&1 || return 0
+  if ! docker inspect "$name" >/dev/null 2>&1; then
+    echo "-"
+    return 0
+  fi
+
+  local out=""
+  out="$(docker port "$name" 2>/dev/null | awk '{print $1"->"$3}' | paste -sd ',' - 2>/dev/null || true)"
+  [[ -n "${out:-}" ]] && echo "$out" || echo "-"
+}
+
 compose_ps_compact() {
-  local stack_dir="$1" compose_path="$2"
-  command -v docker >/dev/null 2>&1 || return 1
-  [[ -d "$stack_dir" && -f "$compose_path" ]] || return 1
+  local _stack_dir="$1" _compose_path="$2"
 
-  local rows
-  rows="$({ cd "$stack_dir" && docker compose -f "$compose_path" ps --format json 2>/dev/null; } || true)"
-  [[ -n "${rows:-}" ]] || return 1
+  # On n'essaye plus de parser le JSON de docker compose (format variable selon versions).
+  # On utilise l'API docker (inspect + docker port) en se basant sur les noms fixes.
+  local names=(ha-postgres homeassistant)
 
-  # Parse JSON multi-line avec awk (pas de jq dans l'image de tests)
-  # Sortie en colonnes fixes.
-  echo "$rows" | awk '
-    function pad(s,w){return sprintf("%-"w"s", s)}
-    BEGIN{
-      w1=16; w2=10; w3=10;
-      print pad("NAME",w1)" "pad("STATE",w2)" "pad("HEALTH",w3)" PORTS"
-    }
-    /"Name"/ {name=$0; sub(/.*"Name"[[:space:]]*:[[:space:]]*"/ ,"",name); sub(/".*/,"",name)}
-    /"State"/ {state=$0; sub(/.*"State"[[:space:]]*:[[:space:]]*"/ ,"",state); sub(/".*/,"",state)}
-    /"Health"/ {health=$0; sub(/.*"Health"[[:space:]]*:[[:space:]]*"/ ,"",health); sub(/".*/,"",health)}
-    /"Publishers"/ {ports=""}
-    /"URL"/ {
-      u=$0; sub(/.*"URL"[[:space:]]*:[[:space:]]*"/,"",u); sub(/".*/,"",u);
-      if (u!="") { if (ports!="") ports=ports","; ports=ports u }
-    }
-    /}\s*,?\s*$/ && name!="" && state!="" {
-      if (health=="") health="-";
-      if (ports=="") ports="-";
-      print pad(name,w1)" "pad(state,w2)" "pad(health,w3)" "ports;
-      name=state=health=ports="";
-    }
-  '
+  local enable_caddy="${ENABLE_CADDY:-}"
+  if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  if [[ "${enable_caddy:-0}" == "1" || "${enable_caddy:-}" == "true" ]]; then
+    names=(ha-caddy ha-postgres homeassistant)
+  elif docker inspect ha-caddy >/dev/null 2>&1; then
+    # fallback: si le conteneur existe, on l'inclut.
+    names=(ha-caddy ha-postgres homeassistant)
+  fi
+
+  {
+    printf '%-16s %-10s %-10s %s\n' "NAME" "STATE" "HEALTH" "PORTS"
+    for n in "${names[@]}"; do
+      local state health ports
+      state="$(docker inspect -f '{{.State.Status}}' "$n" 2>/dev/null || echo "missing")"
+      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$n" 2>/dev/null || true)"
+      [[ -z "${health:-}" ]] && health="-"
+      ports="$(docker_ports_for_container "$n")"
+      printf '%-16s %-10s %-10s %s\n' "$n" "$state" "$health" "$ports"
+    done
+  } | cat
 }
 
 status_wizard() {
