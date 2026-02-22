@@ -31,17 +31,26 @@ apt_install() {
 
 whi_input() {
   local title="$1" prompt="$2" default="${3:-}"
-  whiptail --title "$title" --inputbox "$prompt" 10 70 "$default" 3>&1 1>&2 2>&3
+  whiptail --title "$title" --inputbox "$prompt" 10 70 "$default" \
+    --ok-button "Valider" --cancel-button "Retour" 3>&1 1>&2 2>&3
 }
 
 whi_pass() {
   local title="$1" prompt="$2"
-  whiptail --title "$title" --passwordbox "$prompt" 10 70 3>&1 1>&2 2>&3
+  whiptail --title "$title" --passwordbox "$prompt" 10 70 \
+    --ok-button "Valider" --cancel-button "Retour" 3>&1 1>&2 2>&3
 }
 
 whi_yesno() {
   local title="$1" prompt="$2"
-  whiptail --title "$title" --yesno "$prompt" 10 70
+  whiptail --title "$title" --yesno "$prompt" 10 70 \
+    --yes-button "Oui" --no-button "Non"
+}
+
+# Petit helper: affiche une info avec "OK"
+whi_info() {
+  local title="$1" msg="$2"
+  whiptail --title "$title" --msgbox "$msg" 12 80 --ok-button "OK"
 }
 
 is_interactive_tty() {
@@ -184,12 +193,13 @@ setup_nas_smb() {
   apt_install cifs-utils
 
   local server share user pass mountpoint subdir
-  server="$(whi_input "NAS SMB" "Serveur (IP ou nom) :")"
-  share="$(whi_input "NAS SMB" "Nom du partage (share) :")"
-  subdir="$(whi_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")"
-  user="$(whi_input "NAS SMB" "Utilisateur :")"
-  pass="$(whi_pass "NAS SMB" "Mot de passe :")"
-  mountpoint="$(whi_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")"
+
+  server="$(whi_input "NAS SMB" "Serveur (IP ou nom) :")" || return 1
+  share="$(whi_input "NAS SMB" "Nom du partage (share) :")" || return 1
+  subdir="$(whi_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")" || return 1
+  user="$(whi_input "NAS SMB" "Utilisateur :")" || return 1
+  pass="$(whi_pass "NAS SMB" "Mot de passe :")" || return 1
+  mountpoint="$(whi_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")" || return 1
 
   mkdir -p /etc/samba
   cat > "$SAMBA_CREDS" <<EOF
@@ -252,43 +262,8 @@ choose_usb_partition() {
   fi
 
   whiptail --title "USB" --menu "Choisis une partition (UUID)" 20 78 10 \
+    --ok-button "Valider" --cancel-button "Retour" \
     "${choices[@]}" 3>&1 1>&2 2>&3
-}
-
-setup_env() {
-  mkdir -p "$STACK_DIR"
-
-  # Variables utilisées par docker-compose.yml + configuration.yaml
-  if [[ ! -f "$ENV_FILE" ]]; then
-    local pg_user pg_db pg_pass
-    pg_user="ha"
-    pg_db="homeassistant"
-    pg_pass="$(head -c 24 /dev/urandom | base64 | tr -d '=+/\n' | head -c 24)"
-
-    cat > "$ENV_FILE" <<EOF
-POSTGRES_USER=$pg_user
-POSTGRES_DB=$pg_db
-POSTGRES_PASSWORD=$pg_pass
-EOF
-    chmod 600 "$ENV_FILE"
-  fi
-
-  # Charge les variables dans l’environnement du script
-  # shellcheck disable=SC1090
-  set -a
-  . "$ENV_FILE"
-  set +a
-}
-
-setup_compose_prereqs() {
-  if ! req_bin docker; then
-    apt_install docker.io
-  fi
-
-  # Docker Compose plugin (compose v2)
-  if ! docker compose version >/dev/null 2>&1; then
-    apt_install docker-compose-plugin
-  fi
 }
 
 setup_usb_backup() {
@@ -298,7 +273,7 @@ setup_usb_backup() {
   uuid="$(choose_usb_partition)" || return 1
 
   local mountpoint
-  mountpoint="$(whi_input "USB" "Point de montage :" "/mnt/usbbackup")"
+  mountpoint="$(whi_input "USB" "Point de montage :" "/mnt/usbbackup")" || return 1
 
   mkdir -p "$mountpoint"
 
@@ -375,16 +350,22 @@ Backups
 EOF
 )
 
-    whiptail --title "Résumé" --msgbox "$summary" 28 92
+    whiptail --title "Résumé" --msgbox "$summary" 28 92 --ok-button "OK"
 
     local action
     action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 18 78 10 \
+      --ok-button "Valider" --cancel-button "Retour" \
       "continuer" "Terminer l'installation" \
       "edit-env" "Modifier POSTGRES_* (.env)" \
       "restic-pass" "Redéfinir le mot de passe Restic" \
       "nas" "Configurer / reconfigurer un NAS SMB" \
       "usb" "Configurer / reconfigurer un disque USB" \
-      3>&1 1>&2 2>&3) || return 1
+      3>&1 1>&2 2>&3)
+
+    if [[ -z "${action:-}" ]]; then
+      # Retour => réaffiche le résumé
+      continue
+    fi
 
     case "$action" in
       continuer)
@@ -417,10 +398,10 @@ EOF
         setup_restic_password
         ;;
       nas)
-        setup_nas_smb
+        setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
         ;;
       usb)
-        setup_usb_backup
+        setup_usb_backup || whi_info "USB" "Configuration USB annulée."
         ;;
     esac
 
@@ -466,17 +447,17 @@ main() {
 
   # Optionnel: config NAS
   if whi_yesno "Backup" "Configurer un repository restic sur un NAS (SMB/CIFS) ?"; then
-    setup_nas_smb
+    setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
   fi
 
   # Optionnel: config USB
   if whi_yesno "Backup" "Configurer un repository restic sur un disque USB ?"; then
-    setup_usb_backup
+    setup_usb_backup || whi_info "USB" "Configuration USB annulée."
   fi
 
   show_summary_and_edit
 
-  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose up -d" 12 70
+  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose up -d" 12 70 --ok-button "OK"
 }
 
 main "$@"
