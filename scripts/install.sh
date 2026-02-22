@@ -192,6 +192,9 @@ EOF
 
 choose_usb_partition() {
   local choices=()
+
+  # Format: NAME FSTYPE SIZE MOUNTPOINT UUID (sans en-tête)
+  # On utilise lsblk côté Linux (sur la box). Ne pas appeler sur macOS.
   while IFS= read -r line; do
     # NAME FSTYPE SIZE MOUNTPOINT UUID
     local name fstype size mp uuid
@@ -202,5 +205,74 @@ choose_usb_partition() {
     uuid="$(awk '{print $5}' <<<"$line")"
 
     [[ -z "$uuid" ]] && continue
+
+    # Label lisible pour whiptail
+    local label="$name ($fstype, $size)"
+    if [[ -n "$mp" && "$mp" != "-" ]]; then
+      label+=" mounted:$mp"
+    fi
+
+    choices+=("$uuid" "$label")
+  done < <(lsblk -rpo NAME,FSTYPE,SIZE,MOUNTPOINT,UUID 2>/dev/null | awk '$2 != "" {print $0}')
+
+  if [[ ${#choices[@]} -eq 0 ]]; then
+    whiptail --msgbox "Aucune partition USB détectée (lsblk n'a rien retourné)." 10 70
+    return 1
+  fi
+
+  whiptail --title "USB" --menu "Choisis une partition (UUID)" 20 78 10 \
+    "${choices[@]}" 3>&1 1>&2 2>&3
+}
+
+setup_env() {
+  mkdir -p "$STACK_DIR"
+
+  # Variables utilisées par docker-compose.yml + configuration.yaml
+  if [[ ! -f "$ENV_FILE" ]]; then
+    local pg_user pg_db pg_pass
+    pg_user="ha"
+    pg_db="homeassistant"
+    pg_pass="$(head -c 24 /dev/urandom | base64 | tr -d '=+/\n' | head -c 24)"
+
+    cat > "$ENV_FILE" <<EOF
+POSTGRES_USER=$pg_user
+POSTGRES_DB=$pg_db
+POSTGRES_PASSWORD=$pg_pass
+EOF
+    chmod 600 "$ENV_FILE"
+  fi
+}
+
+setup_compose_prereqs() {
+  if ! req_bin docker; then
+    apt_install docker.io
+  fi
+
+  # Docker Compose plugin (compose v2)
+  if ! docker compose version >/dev/null 2>&1; then
+    apt_install docker-compose-plugin
+  fi
+}
+
+main() {
+  need_root
+  ensure_dirs
+
+  # deps minimales pour l’install
+  apt_install whiptail awk sed coreutils util-linux ca-certificates
+
+  setup_compose_prereqs
+  setup_env
+  configure_homeassistant_yaml
+  setup_systemd_backup
+  setup_restic_password
+
+  # Optionnel: config NAS
+  if whi_yesno "Backup" "Configurer un repository restic sur un NAS (SMB/CIFS) ?"; then
+    setup_nas_smb
+  fi
+
+  whiptail --msgbox "Installation terminée.\n\nDémarrage: cd $STACK_DIR && docker compose up -d" 12 70
+}
 
 main "$@"
