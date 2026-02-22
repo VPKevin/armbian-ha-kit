@@ -423,6 +423,8 @@ main() {
       remove)
         uninstall_wizard || true
         # Important: on ne revient pas au menu après une désinstallation.
+        # Et si on a été lancé via bootstrap.sh, on évite d'afficher les "Next steps".
+        export HA_SKIP_NEXT_STEPS=1
         exit 0
         ;;
     esac

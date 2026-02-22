@@ -8,6 +8,7 @@
 # Environment variables (override defaults):
 #   HA_REF        Git ref to download (default: main)
 #   HA_INSTALL_DIR  Target installation directory (default: /srv/ha-stack)
+#   HA_SKIP_NEXT_STEPS  If set to 1, do not print 'Next steps' footer
 #
 # ⚠  SECURITY NOTE — "curl | bash":
 #   Piping a remote script directly into bash is convenient but carries risk:
@@ -29,6 +30,7 @@ REPO_OWNER="VPKevin"
 REPO_NAME="armbian-ha-kit"
 HA_REF="${HA_REF:-main}"
 HA_INSTALL_DIR="${HA_INSTALL_DIR:-/srv/ha-stack}"
+HA_SKIP_NEXT_STEPS="${HA_SKIP_NEXT_STEPS:-0}"
 
 # ---------------------------------------------------------------------------
 # Data directories that must never be clobbered
@@ -256,7 +258,9 @@ main() {
   download_archive
   extract_archive
   run_installer
-  print_next_steps
+  if [[ "${HA_SKIP_NEXT_STEPS}" != "1" ]]; then
+    print_next_steps
+  fi
 }
 
 main "$@"

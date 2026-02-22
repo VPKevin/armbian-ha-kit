@@ -3,6 +3,19 @@ set -euo pipefail
 
 # Désinstallation de la stack.
 
+uninstall_remove_packages() {
+  # Best-effort: retirer des dépendances installées par le projet.
+  # On ne purge pas docker/caddy (peut être utilisé par d'autres services).
+  local pkgs=(restic cifs-utils whiptail)
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    return 0
+  fi
+
+  apt-get remove -y "${pkgs[@]}" 2>/dev/null || true
+  apt-get autoremove -y 2>/dev/null || true
+}
+
 uninstall_wizard() {
   if ! whi_yesno "Désinstallation" "Tout désinstaller ?\n\nCette action peut supprimer les conteneurs et, si tu le demandes, les données dans ${STACK_DIR}."; then
     return 0
@@ -11,6 +24,11 @@ uninstall_wizard() {
   local remove_data=0
   if whi_yesno "Désinstallation" "Supprimer aussi les données (config, postgres, backup, caddy, restic) dans ${STACK_DIR} ?\n\nATTENTION: irréversible."; then
     remove_data=1
+  fi
+
+  local remove_pkgs=0
+  if whi_yesno "Désinstallation" "Supprimer aussi les paquets installés pour le projet (ex: restic, cifs-utils, whiptail) ?\n\nConseillé seulement si cette machine ne s'en sert pas pour autre chose."; then
+    remove_pkgs=1
   fi
 
   # Stop stack
@@ -29,10 +47,16 @@ uninstall_wizard() {
   # creds
   rm -f "$SAMBA_CREDS" 2>/dev/null || true
 
+  # Bootstrap synced to STACK_DIR (if present)
+  rm -f "${STACK_DIR}/bootstrap.sh" 2>/dev/null || true
+
   if [[ $remove_data -eq 1 ]]; then
     rm -rf "$STACK_DIR" || true
   fi
 
+  if [[ $remove_pkgs -eq 1 ]]; then
+    uninstall_remove_packages
+  fi
+
   whi_info "Désinstallation" "Désinstallation terminée."
 }
-
