@@ -29,32 +29,23 @@ configure_homeassistant_yaml() {
   : "${POSTGRES_PASSWORD:=changeme}"
 
   if ! grep -q "^recorder:" "$cfg"; then
-    local trusted_block
+    # Construit trusted_proxies avec indentation correcte.
+    # Par défaut: subnet docker bridge (cas proxy dans docker).
+    local trusted_lines="    - ${subnet}"
 
-    # Par défaut, on fait confiance au subnet docker (cas Caddy dans docker).
-    trusted_block="  trusted_proxies:\n    - ${subnet}"
-
-    # Si l'utilisateur a un proxy externe, on peut ajouter ses IP/CIDR.
-    local has_external_proxy="${HAS_EXTERNAL_PROXY:-}"
-    if [[ -z "${has_external_proxy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
-      has_external_proxy="$(env_get "HAS_EXTERNAL_PROXY" "$ENV_FILE" 2>/dev/null || true)"
-    fi
-
-    # Si PROXY_TRUSTED_PROXIES est défini dans le .env, il prime.
+    # Si PROXY_TRUSTED_PROXIES est défini dans le .env, on l'ajoute.
     # Format attendu: "192.168.1.10,10.0.0.0/24"
     local extra_trusted=""
     if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
       extra_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
     fi
 
-    if [[ "${has_external_proxy:-0}" == "1" || "${has_external_proxy:-}" == "true" ]]; then
-      if [[ -n "${extra_trusted:-}" ]]; then
-        local line
-        while IFS= read -r line; do
-          [[ -z "${line:-}" ]] && continue
-          trusted_block+="\n    - ${line}"
-        done < <(echo "$extra_trusted" | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' )
-      fi
+    if [[ -n "${extra_trusted:-}" ]]; then
+      local line
+      while IFS= read -r line; do
+        [[ -z "${line:-}" ]] && continue
+        trusted_lines+="\n    - ${line}"
+      done < <(echo "$extra_trusted" | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
     fi
 
     cat >> "$cfg" <<EOF
@@ -64,7 +55,8 @@ recorder:
 
 http:
   use_x_forwarded_for: true
-${trusted_block}
+  trusted_proxies:
+$(printf '%b' "$trusted_lines")
 EOF
   fi
 }

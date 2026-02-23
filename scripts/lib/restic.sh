@@ -32,10 +32,20 @@ init_restic_repo() {
   local repo="$1"
   ensure_restic || return 1
 
+  if [[ ! -f "$RESTIC_PASS" ]]; then
+    echo "Restic password file missing: $RESTIC_PASS" >&2
+    return 1
+  fi
+
+  # S'assure que le path existe (utile pour USB/NAS)
+  mkdir -p "$repo" 2>/dev/null || true
+
   export RESTIC_REPOSITORY="$repo"
   export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
+
+  # Si snapshots marche => repo OK. Sinon, on tente init et on laisse stderr remonter.
   if ! restic snapshots >/dev/null 2>&1; then
-    restic init
+    restic init 1>/dev/null
   fi
 }
 

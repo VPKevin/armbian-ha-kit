@@ -178,8 +178,23 @@ setup_usb_backup() {
 
   if ! mount "$mountpoint" 2>/tmp/ha-usb-mount.err; then
     local err
-    err="$(tail -n 20 /tmp/ha-usb-mount.err 2>/dev/null | sed 's/^/  /' || true)"
-    whi_info "USB" "Échec du montage de $mountpoint.\n\nVérifie le format (exfat/ext4), et que la partition est correcte.\n\nErreur:\n${err}"
+    err="$(tail -n 50 /tmp/ha-usb-mount.err 2>/dev/null | sed 's/^/  /' || true)"
+    whi_info "USB" "Échec du montage de $mountpoint.\n\nVérifie le format (exfat/ext4) et que la partition est correcte.\n\nErreur:\n${err}"
+    return 1
+  fi
+
+  # Vérifie qu'on est bien monté (évite le cas 'mount' OK mais pas de device, ou automount non déclenché)
+  if ! mountpoint -q "$mountpoint" 2>/dev/null; then
+    whi_info "USB" "Le point $mountpoint n'est pas monté (mountpoint -q=false).\n\nAstuce: si x-systemd.automount est actif, un accès au dossier doit déclencher le montage."
+    return 1
+  fi
+
+  # Vérifie que c'est bien écrivable (cause fréquente: FS en read-only, permissions exfat/ntfs, etc.)
+  if ! (touch "$mountpoint/.ha_write_test" 2>/tmp/ha-usb-write.err && rm -f "$mountpoint/.ha_write_test" 2>/tmp/ha-usb-write.err); then
+    local err fsline
+    err="$(tail -n 50 /tmp/ha-usb-write.err 2>/dev/null | sed 's/^/  /' || true)"
+    fsline="$(findmnt -n -o FSTYPE,OPTIONS --target "$mountpoint" 2>/dev/null || true)"
+    whi_info "USB" "Le point de montage n'est pas écrivable: $mountpoint\n\nFS/options: ${fsline}\n\nErreur:\n${err}"
     return 1
   fi
 
@@ -187,9 +202,10 @@ setup_usb_backup() {
 
   add_repo "$mountpoint/restic-ha"
   if ! init_restic_repo "$mountpoint/restic-ha" 2>/tmp/ha-usb-restic.err; then
-    local err
-    err="$(tail -n 30 /tmp/ha-usb-restic.err 2>/dev/null | sed 's/^/  /' || true)"
-    whi_info "USB" "Échec d'initialisation du repository Restic sur USB.\n\nRepo: $mountpoint/restic-ha\n\nErreur:\n${err}"
+    local err fsline
+    err="$(tail -n 80 /tmp/ha-usb-restic.err 2>/dev/null | sed 's/^/  /' || true)"
+    fsline="$(findmnt -n -o FSTYPE,OPTIONS --target "$mountpoint" 2>/dev/null || true)"
+    whi_info "USB" "Échec d'initialisation du repository Restic sur USB.\n\nRepo: $mountpoint/restic-ha\nFS/options: ${fsline}\n\nErreur:\n${err}"
     return 1
   fi
 
