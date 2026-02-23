@@ -27,3 +27,24 @@ setup_systemd_backup() {
   systemctl enable --now ha-backup.timer
 }
 
+setup_systemd_runtime() {
+  if [[ -f "${STACK_DIR}/scripts/ha-stack-start.sh" ]]; then
+    install -m 0755 "${STACK_DIR}/scripts/ha-stack-start.sh" /usr/local/bin/ha-stack-start.sh
+  else
+    whi_info "Systemd" "Fichier manquant: ${STACK_DIR}/scripts/ha-stack-start.sh\nImpossible d'installer le service systemd de la stack."
+    return
+  fi
+
+  install -d /etc/systemd/system
+  install -m 0644 "${STACK_DIR}/systemd/ha-stack.service" /etc/systemd/system/ha-stack.service
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    whi_info "Systemd" "systemctl non disponible (environnement conteneur ?).\nPour démarrer la stack manuellement:\n  /usr/local/bin/ha-stack-start.sh start"
+    return
+  fi
+
+  systemctl daemon-reload
+  systemctl enable ha-stack.service
+  systemctl start ha-stack.service || true
+}
+

@@ -539,6 +539,7 @@ main() {
         prompt_caddy_domain || true
         configure_homeassistant_yaml
         setup_systemd_backup
+        setup_systemd_runtime || true
         setup_restic_password
 
         # À propos de l'ordre: sur une ré-install/migration, l'env/restic peuvent déjà exister.
