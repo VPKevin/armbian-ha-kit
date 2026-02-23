@@ -132,6 +132,20 @@ prompt_features() {
     fi
   fi
 
+  # Si proxy externe: on demande les IP/CIDR à autoriser dans Home Assistant (trusted_proxies).
+  if [[ $has_external_proxy -eq 1 ]]; then
+    local existing_trusted
+    existing_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
+
+    local proxy_ip
+    proxy_ip="$(whi_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || true
+
+    # Si renseigné, on stocke. Sinon on laisse vide (mais HA pourra refuser les headers si le proxy n'est pas ajouté).
+    if [[ -n "${proxy_ip:-}" ]]; then
+      env_set_kv "PROXY_TRUSTED_PROXIES" "$proxy_ip" "$ENV_FILE"
+    fi
+  fi
+
   # 2) Caddy (proxy local) uniquement si pas de proxy externe
   if [[ $has_external_proxy -eq 1 ]]; then
     enable_caddy=0
@@ -498,8 +512,8 @@ main() {
       restore)
         choose_compose_source || true
         setup_env
-        prompt_features
-        prompt_caddy_domain || true
+        # En mode restauration, on évite les questions d'exposition (Caddy/UPnP/proxy).
+        # On a seulement besoin de variables de base + accès au repo Restic.
         if restore_wizard; then
           whi_info "Restauration" "Restauration terminée."
         else
