@@ -46,6 +46,36 @@ sudo bash bootstrap.sh --ref v1.0.0
 
 ---
 
+## Options du bootstrap et mode simulation
+
+Le script `bootstrap.sh` accepte plusieurs façons de préciser quel contenu Git télécharger et un mode de simulation non destructif :
+
+- `--ref <tag|commit|branch>` ou `--ref=<value>` : télécharge l'archive correspondant au ref Git (tag, SHA, ou nom de branche).
+- `--branch <branch>` ou `--branch=<value>` ou `-b <branch>` : alias de `--ref` — même effet.
+- `--dir <install-dir>` : change le répertoire d'installation (variable d'environnement `HA_INSTALL_DIR`).
+- `--dry-run` : affiche les actions prévues sans rien modifier (utile pour valider ce que fera le bootstrap). En `--dry-run` le script n'exige pas `sudo`.
+
+Exemples :
+
+```bash
+# Simuler l'installation depuis une branche (aucun changement réalisé)
+bash bootstrap.sh --branch copilot/add-systemd-service-wrapper --dry-run
+
+# Télécharger un bootstrap épinglé sur un tag (exécution réelle)
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.0.0/bootstrap.sh -o bootstrap.sh
+sudo bash bootstrap.sh --ref v1.0.0
+
+# Utilisation en one-liner (piping) en choisissant une branche
+curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh | sudo bash -s -- --ref=copilot/add-systemd-service-wrapper
+```
+
+Remarques techniques :
+- Le script construit l'URL d'archive GitHub comme suit :
+  `https://github.com/<owner>/<repo>/archive/<ref>.tar.gz`. Ainsi, fournir un nom de branche contenant des barres (`feature/xyz`) fonctionne tant que la branche existe sur GitHub.
+- Pour des installations reproductibles en production, il est fortement recommandé de pinner un tag ou un SHA (ex: `--ref v1.2.3` ou `--ref <sha>`).
+
+---
+
 ## Manual install
 
 If you prefer full control:

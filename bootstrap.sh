@@ -3,7 +3,12 @@
 # Downloads the repository archive from GitHub (no git required) and runs install.sh.
 #
 # Usage:
-#   sudo bash bootstrap.sh [--ref <tag|commit|branch>] [--dir <install-dir>]
+#   sudo bash bootstrap.sh [--ref <tag|commit|branch>] [--branch <branch>] [-b <branch>] [--dir <install-dir>]
+#
+# Notes:
+#   - `--ref` and `--branch` are aliases that both set the Git ref to download.
+#   - You can also pass them as `--ref=<value>` or `--branch=<value>` when using
+#     `curl ... | sudo bash -s -- --ref=...`.
 #
 # Environment variables (override defaults):
 #   HA_REF        Git ref to download (default: main)
@@ -47,13 +52,30 @@ die()  { printf '\e[1;31m[bootstrap]\e[0m ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Parse CLI arguments
+# Supports:
+#   --ref <value>         (existing)
+#   --ref=<value>
+#   --branch <value>      (alias)
+#   --branch=<value>
+#   -b <value>            (short alias)
+#   --dir <install-dir>
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ref)   HA_REF="$2";         shift 2 ;;
-    --dir)   HA_INSTALL_DIR="$2"; shift 2 ;;
+    --ref)
+      HA_REF="$2"; shift 2 ;;
+    --ref=*)
+      HA_REF="${1#--ref=}"; shift ;;
+    --branch)
+      HA_REF="$2"; shift 2 ;;
+    --branch=*)
+      HA_REF="${1#--branch=}"; shift ;;
+    -b)
+      HA_REF="$2"; shift 2 ;;
+    --dir)
+      HA_INSTALL_DIR="$2"; shift 2 ;;
     --help|-h)
-      sed -n '2,30p' "$0" | sed 's/^# \?//'
+      sed -n '2,40p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
     *) die "Unknown argument: $1. Use --help for usage." ;;
