@@ -22,31 +22,52 @@ _ui_map_rc() {
   esac
 }
 
+# Exécute whiptail sans que `set -e` ne termine le script sur Cancel/Esc.
+# stdout: la valeur choisie/saisie (si applicable)
+# return: code whiptail brut (0/1/255)
+_ui_whiptail_capture() {
+  local out rc
+  set +e
+  out="$(whiptail "$@" 3>&1 1>&2 2>&3)"
+  rc=$?
+  set -e
+  printf '%s' "$out"
+  return "$rc"
+}
+
 whi_input() {
   local title="$1" prompt="$2" default="${3:-}"
+
   local out
-  out="$(whiptail --title "$title" --inputbox "$prompt" 10 70 "$default" \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" 3>&1 1>&2 2>&3)"
+  out="$(_ui_whiptail_capture --title "$title" --inputbox "$prompt" 10 70 "$default" \
+    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)")"
   local rc=$?
+
   _ui_map_rc "$rc" || return $?
   printf '%s' "$out"
 }
 
 whi_pass() {
   local title="$1" prompt="$2"
+
   local out
-  out="$(whiptail --title "$title" --passwordbox "$prompt" 10 70 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" 3>&1 1>&2 2>&3)"
+  out="$(_ui_whiptail_capture --title "$title" --passwordbox "$prompt" 10 70 \
+    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)")"
   local rc=$?
+
   _ui_map_rc "$rc" || return $?
   printf '%s' "$out"
 }
 
 whi_yesno() {
   local title="$1" prompt="$2"
+
+  set +e
   whiptail --title "$title" --yesno "$prompt" 10 70 \
     --yes-button "$(t YES)" --no-button "$(t NO)"
   local rc=$?
+  set -e
+
   _ui_map_rc "$rc" || return $?
 }
 
@@ -57,9 +78,13 @@ whi_info() {
 
 whi_confirm() {
   local title="$1" prompt="$2"
+
+  set +e
   whiptail --title "$title" --yesno "$prompt" 10 70 \
     --yes-button "$(t YES)" --no-button "$(t NO)"
   local rc=$?
+  set -e
+
   _ui_map_rc "$rc" || return $?
 }
 
@@ -69,11 +94,13 @@ whi_confirm() {
 whi_menu() {
   local title="$1" prompt="$2" height="$3" width="$4" list_height="$5"
   shift 5
+
   local out
-  out="$(whiptail --title "$title" --menu "$prompt" "$height" "$width" "$list_height" \
+  out="$(_ui_whiptail_capture --title "$title" --menu "$prompt" "$height" "$width" "$list_height" \
     --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    "$@" 3>&1 1>&2 2>&3)"
+    "$@")"
   local rc=$?
+
   _ui_map_rc "$rc" || return $?
   printf '%s' "$out"
 }
