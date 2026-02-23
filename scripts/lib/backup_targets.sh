@@ -23,12 +23,12 @@ setup_nas_smb() {
 
   local server share user pass mountpoint subdir
 
-  server="$(whi_input "NAS SMB" "Serveur (IP ou nom) :")" || return 1
-  share="$(whi_input "NAS SMB" "Nom du partage (share) :")" || return 1
-  subdir="$(whi_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")" || return 1
-  user="$(whi_input "NAS SMB" "Utilisateur :")" || return 1
-  pass="$(whi_pass "NAS SMB" "Mot de passe :")" || return 1
-  mountpoint="$(whi_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")" || return 1
+  server="$(whi_input "NAS SMB" "Serveur (IP ou nom) :")" || return $?
+  share="$(whi_input "NAS SMB" "Nom du partage (share) :")" || return $?
+  subdir="$(whi_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")" || return $?
+  user="$(whi_input "NAS SMB" "Utilisateur :")" || return $?
+  pass="$(whi_pass "NAS SMB" "Mot de passe :")" || return $?
+  mountpoint="$(whi_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")" || return $?
 
   mkdir -p /etc/samba
   cat > "$SAMBA_CREDS" <<EOF
@@ -48,7 +48,15 @@ EOF
   echo "$remote  $mountpoint  cifs  $opts  0  0" >> /etc/fstab
 
   systemctl daemon-reload
-  mount "$mountpoint" || true
+
+  # Déclenche le montage (automount) puis vérifie réellement que c'est monté.
+  mount "$mountpoint" 2>/tmp/ha-nas-mount.err || true
+  if ! mountpoint -q "$mountpoint" 2>/dev/null; then
+    local err
+    err="$(tail -n 50 /tmp/ha-nas-mount.err 2>/dev/null | sed 's/^/  /' || true)"
+    whi_info "NAS SMB" "Le partage n'a pas pu être monté sur $mountpoint.\n\nSi tu utilises x-systemd.automount, un accès au dossier doit déclencher le montage, mais ici il a échoué.\n\nErreur:\n${err}"
+    return 1
+  fi
 
   local repo_path="$mountpoint"
   if [[ -n "$subdir" ]]; then

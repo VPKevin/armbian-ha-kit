@@ -52,28 +52,39 @@ init_restic_repo() {
 setup_restic_password() {
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
-    return
+    return 0
   fi
 
   if ! is_interactive_tty; then
     head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
     chmod 600 "$RESTIC_PASS"
-    return
+    return 0
   fi
 
   if whi_yesno "Restic" "Définir un mot de passe restic maintenant ? (sinon il sera généré aléatoirement)"; then
-    local p1 p2
-    p1="$(whi_pass "Restic" "Mot de passe restic (à conserver !)")"
-    p2="$(whi_pass "Restic" "Confirme le mot de passe restic")"
-    if [[ "$p1" != "$p2" || -z "$p1" ]]; then
-      whi_info "Restic" "Mot de passe invalide / différent."
-      exit 1
-    fi
-    printf "%s" "$p1" > "$RESTIC_PASS"
+    while true; do
+      local p1 p2
+      p1="$(whi_pass "Restic" "Mot de passe restic (à conserver !)")" || return $?
+      p2="$(whi_pass "Restic" "Confirme le mot de passe restic")" || return $?
+
+      if [[ -z "${p1:-}" ]]; then
+        whi_info "Restic" "Mot de passe vide."
+        continue
+      fi
+      if [[ "$p1" != "$p2" ]]; then
+        whi_info "Restic" "Les mots de passe ne correspondent pas."
+        continue
+      fi
+
+      printf "%s" "$p1" > "$RESTIC_PASS"
+      break
+    done
   else
     head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
   fi
+
   chmod 600 "$RESTIC_PASS"
+  return 0
 }
 
 restic_choose_repo() {

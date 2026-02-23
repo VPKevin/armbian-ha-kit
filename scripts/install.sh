@@ -287,17 +287,22 @@ EOF
     whiptail --title "Résumé" --msgbox "$summary" 30 96 --ok-button "OK"
 
     local action
-    action=$(whiptail --title "Résumé" --menu "Que veux-tu faire ?" 18 90 10 \
-      --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
+    action="$(whi_menu "Résumé" "Que veux-tu faire ?" 18 90 10 \
       "finaliser" "Terminer l'installation" \
       "revoir" "Revoir ce résumé" \
       "edit" "Modifier la configuration" \
-      "quit" "Quitter l'installation" \
-      3>&1 1>&2 2>&3)
+      "quit" "Quitter l'installation")"
+    local action_rc=$?
 
-    if [[ -z "${action:-}" ]]; then
-      continue
-    fi
+    case "$action_rc" in
+      "$UI_BACK")
+        # Retour depuis le résumé => quitter l'installation (retour au menu principal)
+        return 2
+        ;;
+      "$UI_ABORT")
+        return 2
+        ;;
+    esac
 
     case "$action" in
       revoir)
@@ -313,88 +318,99 @@ EOF
         continue
         ;;
       edit)
-        local edit_action
-        edit_action=$(whiptail --title "Configuration" --menu "Que veux-tu modifier ?" 20 92 12 \
-          --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-          "edit-compose" "Changer le docker-compose utilisé" \
-          "edit-env" "Compléter / modifier le .env (variables compose)" \
-          "caddy" "Domaine + email (Caddy)" \
-          "restic-pass" "Redéfinir le mot de passe Restic" \
-          "nas" "Configurer / reconfigurer un NAS SMB" \
-          "usb" "Configurer / reconfigurer un disque USB" \
-          3>&1 1>&2 2>&3) || continue
+        while true; do
+          local edit_action
+          edit_action="$(whi_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
+            "edit-compose" "Changer le docker-compose utilisé" \
+            "edit-env" "Compléter / modifier le .env (variables compose)" \
+            "caddy" "Domaine + email (Caddy)" \
+            "restic-pass" "Redéfinir le mot de passe Restic" \
+            "nas" "Configurer / reconfigurer un NAS SMB" \
+            "usb" "Configurer / reconfigurer un disque USB")"
+          local edit_rc=$?
 
-        case "$edit_action" in
-          edit-compose)
-            choose_compose_source || true
-            env_ensure_from_compose "$COMPOSE_PATH" || true
-            set -a
-            # shellcheck disable=SC1090
-            . "$ENV_FILE" 2>/dev/null || true
-            set +a
-            configure_homeassistant_yaml
-            ;;
-          edit-env)
-            env_ensure_from_compose "$COMPOSE_PATH" || true
+          case "$edit_rc" in
+            "$UI_BACK")
+              # Retour => on revient au menu résumé (pas au début de boucle summary)
+              break
+              ;;
+            "$UI_ABORT")
+              return 2
+              ;;
+          esac
 
-            local pg_user pg_db pg_pass
-            pg_user="${POSTGRES_USER:-ha}"
-            pg_db="${POSTGRES_DB:-homeassistant}"
+          case "$edit_action" in
+            edit-compose)
+              choose_compose_source || true
+              env_ensure_from_compose "$COMPOSE_PATH" || true
+              set -a
+              # shellcheck disable=SC1090
+              . "$ENV_FILE" 2>/dev/null || true
+              set +a
+              configure_homeassistant_yaml
+              ;;
+            edit-env)
+              env_ensure_from_compose "$COMPOSE_PATH" || true
 
-            pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
-            pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
-            pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
+              local pg_user pg_db pg_pass
+              pg_user="${POSTGRES_USER:-ha}"
+              pg_db="${POSTGRES_DB:-homeassistant}"
 
-            if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
-            if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
-            if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
+              pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
+              pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
+              pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
 
-            set -a
-            # shellcheck disable=SC1090
-            . "$ENV_FILE" 2>/dev/null || true
-            set +a
+              if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
+              if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
+              if [[ -n "${pg_pass:-}" ]]; then env_set_kv "POSTGRES_PASSWORD" "$pg_pass" "$ENV_FILE"; fi
 
-            configure_homeassistant_yaml
-            ;;
-          caddy)
-            prompt_caddy_domain || true
-            ;;
-          restic-pass)
-            rm -f "$RESTIC_PASS"
-            setup_restic_password
-            ;;
-          nas)
-            setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
-            ;;
-          usb)
-            setup_usb_backup || true
-            ;;
-        esac
+              set -a
+              # shellcheck disable=SC1090
+              . "$ENV_FILE" 2>/dev/null || true
+              set +a
+
+              configure_homeassistant_yaml
+              ;;
+            caddy)
+              prompt_caddy_domain || true
+              ;;
+            restic-pass)
+              rm -f "$RESTIC_PASS"
+              setup_restic_password || true
+              ;;
+            nas)
+              setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+              ;;
+            usb)
+              setup_usb_backup || true
+              ;;
+          esac
+
+          # refresh previews après une action d'édition
+          if [[ -f "$ENV_FILE" ]]; then
+            env_preview="$(sed -E -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' "$ENV_FILE" 2>/dev/null || true)"
+            env_preview="$(printf '%s\n' "$env_preview" | sed 's/^/  /')"
+          fi
+
+          if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
+            repos_lines="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
+          else
+            repos_lines="  (aucun)"
+          fi
+
+          restic_pass_status="absent"
+          [[ -f "$RESTIC_PASS" ]] && restic_pass_status="présent: ${RESTIC_PASS}"
+
+          samba_status="non"
+          [[ -f "$SAMBA_CREDS" ]] && samba_status="oui: ${SAMBA_CREDS}"
+
+          usb_status="non"
+          if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
+            usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
+          fi
+        done
         ;;
     esac
-
-    # refresh previews
-    if [[ -f "$ENV_FILE" ]]; then
-      env_preview="$(sed -E -e 's/^(POSTGRES_PASSWORD)=.*/\1=********/' "$ENV_FILE" 2>/dev/null || true)"
-      env_preview="$(printf '%s\n' "$env_preview" | sed 's/^/  /')"
-    fi
-
-    if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
-      repos_lines="$(sed 's/^/  - /' "$RESTIC_REPOS" 2>/dev/null || true)"
-    else
-      repos_lines="  (aucun)"
-    fi
-
-    restic_pass_status="absent"
-    [[ -f "$RESTIC_PASS" ]] && restic_pass_status="présent: ${RESTIC_PASS}"
-
-    samba_status="non"
-    [[ -f "$SAMBA_CREDS" ]] && samba_status="oui: ${SAMBA_CREDS}"
-
-    usb_status="non"
-    if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
-      usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
-    fi
   done
 }
 
