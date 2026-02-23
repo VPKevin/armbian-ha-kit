@@ -1,0 +1,13 @@
+[Unit]
+Description=Home Assistant Docker Compose stack
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ha-stack-start.sh start
+ExecStop=/usr/local/bin/ha-stack-start.sh stop
+
+[Install]
+WantedBy=multi-user.target
