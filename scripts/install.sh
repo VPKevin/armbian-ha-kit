@@ -286,13 +286,16 @@ EOF
 
     whiptail --title "Résumé" --msgbox "$summary" 30 96 --ok-button "OK"
 
-    local action
-    action="$(whi_menu "Résumé" "Que veux-tu faire ?" 18 90 10 \
+    local action action_rc
+    if action="$(whi_menu "Résumé" "Que veux-tu faire ?" 18 90 10 \
       "finaliser" "Terminer l'installation" \
       "revoir" "Revoir ce résumé" \
       "edit" "Modifier la configuration" \
-      "quit" "Quitter l'installation")"
-    local action_rc=$?
+      "quit" "Quitter l'installation")"; then
+      action_rc=$UI_OK
+    else
+      action_rc=$?
+    fi
 
     case "$action_rc" in
       "$UI_BACK")
@@ -319,15 +322,18 @@ EOF
         ;;
       edit)
         while true; do
-          local edit_action
-          edit_action="$(whi_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
+          local edit_action edit_rc
+          if edit_action="$(whi_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
             "edit-compose" "Changer le docker-compose utilisé" \
             "edit-env" "Compléter / modifier le .env (variables compose)" \
             "caddy" "Domaine + email (Caddy)" \
             "restic-pass" "Redéfinir le mot de passe Restic" \
             "nas" "Configurer / reconfigurer un NAS SMB" \
-            "usb" "Configurer / reconfigurer un disque USB")"
-          local edit_rc=$?
+            "usb" "Configurer / reconfigurer un disque USB")"; then
+            edit_rc=$UI_OK
+          else
+            edit_rc=$?
+          fi
 
           case "$edit_rc" in
             "$UI_BACK")
@@ -356,9 +362,50 @@ EOF
               pg_user="${POSTGRES_USER:-ha}"
               pg_db="${POSTGRES_DB:-homeassistant}"
 
-              pg_user="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")" || true
-              pg_db="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")" || true
-              pg_pass="$(whi_pass "Postgres" "POSTGRES_PASSWORD")" || true
+              # Les whi_input / whi_pass retournent potentiellement UI_BACK/UI_ABORT.
+              # Ici on préserve le comportement d'annulation en testant le rc.
+              if pg_user_tmp="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")"; then
+                pg_user="$pg_user_tmp"
+              else
+                # si Cancel/Back/Abort, respecter le code de retour
+                local tmp_rc=$?
+                if [[ $tmp_rc -ne $UI_OK ]]; then
+                  # remonte l'erreur vers l'appelant pour traitement (ou ignorer selon le cas)
+                  # On choisit ici de continuer la boucle d'édition si c'était un BACK, sinon retourner.
+                  if [[ $tmp_rc -eq $UI_BACK ]]; then
+                    # revenir au menu précédent (on sort de l'édition)
+                    break
+                  else
+                    return 2
+                  fi
+                fi
+              fi
+
+              if pg_db_tmp="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")"; then
+                pg_db="$pg_db_tmp"
+              else
+                local tmp_rc=$?
+                if [[ $tmp_rc -ne $UI_OK ]]; then
+                  if [[ $tmp_rc -eq $UI_BACK ]]; then
+                    break
+                  else
+                    return 2
+                  fi
+                fi
+              fi
+
+              if pg_pass_tmp="$(whi_pass "Postgres" "POSTGRES_PASSWORD")"; then
+                pg_pass="$pg_pass_tmp"
+              else
+                local tmp_rc=$?
+                if [[ $tmp_rc -ne $UI_OK ]]; then
+                  if [[ $tmp_rc -eq $UI_BACK ]]; then
+                    break
+                  else
+                    return 2
+                  fi
+                fi
+              fi
 
               if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
               if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
