@@ -23,7 +23,7 @@ docker build --target lint -t armbian-tests:lint -f tests/Dockerfile .
 Exemple d'utilisation (shellcheck sur les scripts) :
 
 ```bash
-docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint shellcheck scripts/*.sh
+docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint 'shellcheck scripts/*.sh'
 ```
 
 ## Target `armbian` (simule une box Armbian, utilisation par volume Docker)
