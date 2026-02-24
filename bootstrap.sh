@@ -3,7 +3,7 @@
 # Downloads the repository archive from GitHub (no git required) and runs install.sh.
 #
 # Usage:
-#   sudo bash bootstrap.sh [--ref <tag|commit|branch>] [--branch <branch>] [-b <branch>] [--dir <install-dir>]
+#   sudo bash bootstrap.sh [--ref <tag|commit|branch>] [--branch <branch>] [-b <branch>] [--dir <install-dir>] [--source <remote|local>] [--local]
 #
 # Notes:
 #   - `--ref` and `--branch` are aliases that both set the Git ref to download.
@@ -14,6 +14,7 @@
 #   HA_REF        Git ref to download (default: main)
 #   HA_INSTALL_DIR  Target installation directory (default: /srv/ha-stack)
 #   HA_SKIP_NEXT_STEPS  If set to 1, do not print 'Next steps' footer
+#   BOOTSTRAP_SOURCE  remote (default) or local (use current repo, no download)
 #
 # ⚠  SECURITY NOTE — "curl | bash":
 #   Piping a remote script directly into bash is convenient but carries risk:
@@ -36,6 +37,9 @@ REPO_NAME="armbian-ha-kit"
 HA_REF="${HA_REF:-main}"
 HA_INSTALL_DIR="${HA_INSTALL_DIR:-/srv/ha-stack}"
 HA_SKIP_NEXT_STEPS="${HA_SKIP_NEXT_STEPS:-0}"
+BOOTSTRAP_SOURCE="${BOOTSTRAP_SOURCE:-remote}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # Data directories that must never be clobbered
@@ -74,6 +78,12 @@ while [[ $# -gt 0 ]]; do
       HA_REF="$2"; shift 2 ;;
     --dir)
       HA_INSTALL_DIR="$2"; shift 2 ;;
+    --source)
+      BOOTSTRAP_SOURCE="$2"; shift 2 ;;
+    --source=*)
+      BOOTSTRAP_SOURCE="${1#--source=}"; shift ;;
+    --local)
+      BOOTSTRAP_SOURCE="local"; shift ;;
     --help|-h)
       sed -n '2,40p' "$0" | sed 's/^# \?//'
       exit 0
@@ -147,21 +157,10 @@ download_archive() {
 }
 
 # ---------------------------------------------------------------------------
-# Extract archive (idempotent — preserves data dirs)
+# Sync files from source directory (idempotent — preserves data dirs)
 # ---------------------------------------------------------------------------
-extract_archive() {
-  local extract_dir="${TMPDIR_WORK}/extracted"
-  mkdir -p "${extract_dir}"
-
-  log "Extracting archive ..."
-  tar -xzf "${ARCHIVE_PATH}" -C "${extract_dir}" \
-    || die "Failed to extract archive."
-
-  # GitHub archives contain a single top-level directory: <repo>-<ref>/
-  local src_dir
-  src_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
-  [[ -n "${src_dir}" ]] || die "Could not find extracted source directory."
-
+sync_from_dir() {
+  local src_dir="$1"
   log "Syncing repository files to ${HA_INSTALL_DIR} ..."
   log "(Data directories are preserved: ${PRESERVE_DIRS[*]})"
 
@@ -184,6 +183,8 @@ extract_archive() {
       tar_exclude_args+=(--exclude="${d}")
     fi
   done
+  # Exclut .git en source locale (absent des archives GitHub).
+  tar_exclude_args+=(--exclude=".git")
 
   # Stream source tree into target (overwrite repo files, skip preserved dirs)
   tar -C "${src_dir}" "${tar_exclude_args[@]}" -cf - . \
@@ -193,6 +194,24 @@ extract_archive() {
   ok "Files synced to ${HA_INSTALL_DIR}."
 }
 
+# ---------------------------------------------------------------------------
+# Extract archive (idempotent — preserves data dirs)
+# ---------------------------------------------------------------------------
+extract_archive() {
+  local extract_dir="${TMPDIR_WORK}/extracted"
+  mkdir -p "${extract_dir}"
+
+  log "Extracting archive ..."
+  tar -xzf "${ARCHIVE_PATH}" -C "${extract_dir}" \
+    || die "Failed to extract archive."
+
+  # GitHub archives contain a single top-level directory: <repo>-<ref>/
+  local src_dir
+  src_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  [[ -n "${src_dir}" ]] || die "Could not find extracted source directory."
+
+  sync_from_dir "$src_dir"
+}
 # ---------------------------------------------------------------------------
 # Run install script
 # ---------------------------------------------------------------------------
@@ -274,11 +293,17 @@ main() {
   log "=== armbian-ha-kit bootstrap ==="
   log "Ref:         ${HA_REF}"
   log "Install dir: ${HA_INSTALL_DIR}"
+  log "Source:      ${BOOTSTRAP_SOURCE}"
 
   install_prerequisites
   prepare_install_dir
-  download_archive
-  extract_archive
+  if [[ "${BOOTSTRAP_SOURCE}" == "local" ]]; then
+    log "Using local source: ${SCRIPT_DIR}"
+    sync_from_dir "${SCRIPT_DIR}"
+  else
+    download_archive
+    extract_archive
+  fi
   run_installer
   if [[ "${HA_SKIP_NEXT_STEPS}" != "1" ]]; then
     print_next_steps

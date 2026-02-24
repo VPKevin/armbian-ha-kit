@@ -130,6 +130,7 @@ env_ensure_from_compose() {
 
     local default=""
     [[ -n "${def:-}" ]] && default="$def"
+    default="$(strip_key_prefix_if_any "$name" "$default")"
 
     local val
     val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return 1

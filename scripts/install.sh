@@ -17,11 +17,15 @@ source "${SCRIPT_DIR}/lib/i18n.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/ui.sh"
 # shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/ha.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/compose.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/caddy.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/restic.sh"
 # shellcheck source=/dev/null
@@ -48,31 +52,12 @@ need_root() {
   fi
 }
 
-req_bin() { command -v "$1" >/dev/null 2>&1; }
-
-apt_install() {
-  export DEBIAN_FRONTEND=noninteractive
-
-  # Évite de faire `apt-get update` à chaque interaction. On le fait une fois par run
-  # (ou si l'index est ancien/absent) pour limiter le bruit et accélérer.
-  local stamp="/var/lib/apt/periodic/update-success-stamp"
-  if [[ ! -f "$stamp" ]] || find "$stamp" -mmin +60 >/dev/null 2>&1; then
-    apt-get update -y
-  fi
-
-  apt-get install -y "$@"
-}
-
 write_file_if_missing() {
   local path="$1"
   local content="$2"
   if [[ ! -f "$path" ]]; then
     printf "%s\n" "$content" > "$path"
   fi
-}
-
-is_interactive_tty() {
-  [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
 }
 
 ensure_dirs() {
@@ -361,6 +346,11 @@ EOF
               local pg_user pg_db pg_pass
               pg_user="${POSTGRES_USER:-ha}"
               pg_db="${POSTGRES_DB:-homeassistant}"
+              pg_pass="${POSTGRES_PASSWORD:-}"
+
+              pg_user="$(strip_key_prefix_if_any "POSTGRES_USER" "$pg_user")"
+              pg_db="$(strip_key_prefix_if_any "POSTGRES_DB" "$pg_db")"
+              pg_pass="$(strip_key_prefix_if_any "POSTGRES_PASSWORD" "$pg_pass")"
 
               # Les whi_input / whi_pass retournent potentiellement UI_BACK/UI_ABORT.
               # Ici on préserve le comportement d'annulation en testant le rc.
@@ -406,6 +396,10 @@ EOF
                   fi
                 fi
               fi
+
+              pg_user="$(strip_key_prefix_if_any "POSTGRES_USER" "$pg_user")"
+              pg_db="$(strip_key_prefix_if_any "POSTGRES_DB" "$pg_db")"
+              pg_pass="$(strip_key_prefix_if_any "POSTGRES_PASSWORD" "$pg_pass")"
 
               if [[ -n "${pg_user:-}" ]]; then env_set_kv "POSTGRES_USER" "$pg_user" "$ENV_FILE"; fi
               if [[ -n "${pg_db:-}" ]]; then env_set_kv "POSTGRES_DB" "$pg_db" "$ENV_FILE"; fi
@@ -459,55 +453,6 @@ EOF
         ;;
     esac
   done
-}
-
-strip_env_prefix() {
-  local key="$1" val="$2"
-  if [[ "${val:-}" == "${key}="* ]]; then
-    echo "${val#"${key}"=}"
-  else
-    echo "$val"
-  fi
-}
-
-prompt_caddy_domain() {
-  # Demande uniquement si Caddy est activé.
-  local enable_caddy="${ENABLE_CADDY:-}"
-  if [[ -z "${enable_caddy:-}" ]]; then
-    enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
-  fi
-
-  if [[ "$enable_caddy" == "0" || "$enable_caddy" == "false" ]]; then
-    return 0
-  fi
-
-  local ha_domain le_email
-  ha_domain="$(env_get "HA_DOMAIN" "$ENV_FILE" 2>/dev/null || true)"
-  le_email="$(env_get "LE_EMAIL" "$ENV_FILE" 2>/dev/null || true)"
-
-  # Auto-nettoyage si un ancien run a stocké une valeur polluée.
-  ha_domain="$(strip_env_prefix "HA_DOMAIN" "$ha_domain")"
-  le_email="$(strip_env_prefix "LE_EMAIL" "$le_email")"
-
-  ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return 1
-  le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return 1
-
-  # Si l'utilisateur a collé 'HA_DOMAIN=...' on nettoie aussi.
-  ha_domain="$(strip_env_prefix "HA_DOMAIN" "$ha_domain")"
-  le_email="$(strip_env_prefix "LE_EMAIL" "$le_email")"
-
-  if [[ -z "${ha_domain:-}" || -z "${le_email:-}" ]]; then
-    whi_info "Caddy" "Domaine et email sont requis si Caddy est activé."
-    return 1
-  fi
-
-  env_set_kv "HA_DOMAIN" "$ha_domain" "$ENV_FILE"
-  env_set_kv "LE_EMAIL" "$le_email" "$ENV_FILE"
-
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE" 2>/dev/null || true
-  set +a
 }
 
 main() {

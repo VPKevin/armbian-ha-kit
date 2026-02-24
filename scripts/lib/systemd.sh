@@ -2,6 +2,15 @@
 set -euo pipefail
 
 setup_systemd_backup() {
+  if [[ ! -d /run/systemd/system ]] || ! command -v systemctl >/dev/null 2>&1; then
+    if command -v whi_info >/dev/null 2>&1; then
+      whi_info "Systemd" "Systemd n'est pas disponible dans cet environnement. Le timer de backup ne sera pas installé."
+    else
+      echo "[ha-backup] Systemd indisponible: timer non installé." >&2
+    fi
+    return 0
+  fi
+
   local src_backup="${STACK_DIR}/scripts/backup.sh"
   local dst_backup="/srv/ha-stack/scripts/backup.sh"
   if [[ -f "$src_backup" ]]; then
@@ -26,4 +35,3 @@ setup_systemd_backup() {
   systemctl daemon-reload
   systemctl enable --now ha-backup.timer
 }
-

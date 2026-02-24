@@ -12,7 +12,7 @@ wait_for_health() {
   start="$(date +%s)"
 
   # Construit la liste des conteneurs attendus selon les features.
-  local expected=(ha-postgres homeassistant)
+  local expected=(postgres homeassistant)
   local enable_caddy="${ENABLE_CADDY:-}"
 
   # Si le .env existe, on tente de lire ENABLE_CADDY depuis celui-ci.
@@ -21,17 +21,28 @@ wait_for_health() {
   fi
 
   if [[ "${enable_caddy:-1}" == "1" || "${enable_caddy:-}" == "true" ]]; then
-    expected+=(ha-caddy)
+    expected+=(caddy)
   fi
 
   while true; do
     local unhealthy=()
     local any_running=0
 
-    # Liste tous les containers du projet (ceux du compose). On se base sur les noms fixés.
-    # NB: si un container n'existe pas encore, on le considère comme non prêt.
-    for name in "${expected[@]}"; do
-      local state health
+    # Liste tous les containers du projet (via docker compose). Si absent, on fallback sur les noms fixes.
+    for svc in "${expected[@]}"; do
+      local cid name state health
+      cid="$(compose_container_id "$svc")"
+      if [[ -n "${cid:-}" ]]; then
+        name="$cid"
+      else
+        case "$svc" in
+          postgres) name="ha-postgres" ;;
+          homeassistant) name="homeassistant" ;;
+          caddy) name="ha-caddy" ;;
+          *) name="$svc" ;;
+        esac
+      fi
+
       state="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo "missing")"
       if [[ "$state" == "running" ]]; then
         any_running=1
@@ -41,12 +52,12 @@ wait_for_health() {
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name" 2>/dev/null || true)"
 
       if [[ "$state" != "running" ]]; then
-        unhealthy+=("$name (state=$state)")
+        unhealthy+=("$svc (state=$state)")
         continue
       fi
 
       if [[ -n "$health" && "$health" != "healthy" ]]; then
-        unhealthy+=("$name (health=$health)")
+        unhealthy+=("$svc (health=$health)")
       fi
     done
 
@@ -61,8 +72,21 @@ wait_for_health() {
         echo "Containers non healthy / non prêts:"
         printf '  - %s\n' "${unhealthy[@]}"
         echo
-        for name in "${expected[@]}"; do
-          echo "--- logs: $name (last 200) ---"
+        for svc in "${expected[@]}"; do
+          local cid name
+          cid="$(compose_container_id "$svc")"
+          if [[ -n "${cid:-}" ]]; then
+            name="$cid"
+          else
+            case "$svc" in
+              postgres) name="ha-postgres" ;;
+              homeassistant) name="homeassistant" ;;
+              caddy) name="ha-caddy" ;;
+              *) name="$svc" ;;
+            esac
+          fi
+
+          echo "--- logs: $svc (last 200) ---"
           docker logs --tail 200 "$name" 2>&1 || true
           echo
         done
@@ -73,4 +97,3 @@ wait_for_health() {
     sleep 5
   done
 }
-

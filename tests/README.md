@@ -9,7 +9,7 @@ Principes
 
 Fichiers importants
 - `tests/Dockerfile` : Dockerfile multi-target (targets `lint` et `armbian`).
-- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini). Il supporte maintenant `BOOTSTRAP_SOURCE=local|remote` (default remote).
+- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini). Il supporte maintenant `BOOTSTRAP_SOURCE=local|remote` (default remote) et appelle `bootstrap.sh --local` quand `BOOTSTRAP_SOURCE=local`.
 - `tests/run-smoke.sh` : smoke tests pour vérifier la présence du client Docker et interaction avec le socket.
 
 1) Target `lint` (usage rapide)
@@ -33,6 +33,8 @@ Builder l'image `armbian` (sur macOS/x86 utilisez buildx + qemu) :
 ```bash
 # activer buildx (si nécessaire)
 docker buildx create --use || true
+```
+```bash
 # builder l'image arm64 et la charger localement (--load)
 docker buildx build --platform linux/arm64 --target armbian -t armbian-tests:armbian -f tests/Dockerfile --load .
 ```
@@ -56,7 +58,7 @@ docker run --platform linux/arm64 --rm -it \
   armbian-tests:armbian
 ```
 
-- Exécuter le bootstrap depuis le projet local monté (option `BOOTSTRAP_SOURCE=local`) :
+- Exécuter le bootstrap depuis le projet local monté (option `BOOTSTRAP_SOURCE=local`, équivalent à `bootstrap.sh --local`) :
 
 ```bash
 docker run --platform linux/arm64 --rm -it \

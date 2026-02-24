@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Helpers whiptail. Dépend de scripts/lib/i18n.sh (t()).
 
+# Assure un encodage UTF-8 pour whiptail (sinon accents cassés).
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+export LANG="${LANG:-C.UTF-8}"
+
 # Contrat de navigation UI:
 # - UI_OK    : validation
 # - UI_BACK  : retour (Cancel)

@@ -17,6 +17,11 @@ run_remote() {
 }
 
 if [[ "${BOOTSTRAP_SOURCE}" == "local" ]]; then
+  # Prefer running local bootstrap with --local (keeps behavior consistent).
+  if [[ -f /repo/bootstrap.sh ]]; then
+    exec bash /repo/bootstrap.sh --local
+  fi
+
   # Prefer running installer from a local copy placed into the writable volume (/srv/ha-stack).
   if [[ -f /repo/scripts/install.sh ]]; then
     mkdir -p /srv/ha-stack
@@ -25,11 +30,6 @@ if [[ "${BOOTSTRAP_SOURCE}" == "local" ]]; then
       chmod +x /srv/ha-stack/scripts/install.sh || true
       exec bash /srv/ha-stack/scripts/install.sh
     fi
-  fi
-
-  # If there's a top-level local bootstrap, run it directly (no chmod to avoid issues on RO mounts)
-  if [[ -f /repo/bootstrap.sh ]]; then
-    exec bash /repo/bootstrap.sh
   fi
 
   # Search for a local installer in subdirectories (limited depth)

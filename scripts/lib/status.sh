@@ -76,29 +76,41 @@ compose_ps_compact() {
   local _stack_dir="$1" _compose_path="$2"
 
   # On n'essaye plus de parser le JSON de docker compose (format variable selon versions).
-  # On utilise l'API docker (inspect + docker port) en se basant sur les noms fixes.
-  local names=(ha-postgres homeassistant)
+  # On utilise docker compose ps -q (services) puis docker inspect/port.
+  local services=(postgres homeassistant)
 
   local enable_caddy="${ENABLE_CADDY:-}"
   if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
     enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
   fi
   if [[ "${enable_caddy:-0}" == "1" || "${enable_caddy:-}" == "true" ]]; then
-    names=(ha-caddy ha-postgres homeassistant)
+    services=(caddy postgres homeassistant)
   elif docker inspect ha-caddy >/dev/null 2>&1; then
     # fallback: si le conteneur existe, on l'inclut.
-    names=(ha-caddy ha-postgres homeassistant)
+    services=(caddy postgres homeassistant)
   fi
 
   {
     printf '%-16s %-10s %-10s %s\n' "NAME" "STATE" "HEALTH" "PORTS"
-    for n in "${names[@]}"; do
-      local state health ports
-      state="$(docker inspect -f '{{.State.Status}}' "$n" 2>/dev/null || echo "missing")"
-      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$n" 2>/dev/null || true)"
+    for svc in "${services[@]}"; do
+      local cid name state health ports
+      cid="$(compose_container_id "$svc")"
+      if [[ -n "${cid:-}" ]]; then
+        name="$cid"
+      else
+        case "$svc" in
+          postgres) name="ha-postgres" ;;
+          homeassistant) name="homeassistant" ;;
+          caddy) name="ha-caddy" ;;
+          *) name="$svc" ;;
+        esac
+      fi
+
+      state="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo "missing")"
+      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name" 2>/dev/null || true)"
       [[ -z "${health:-}" ]] && health="-"
-      ports="$(docker_ports_for_container "$n")"
-      printf '%-16s %-10s %-10s %s\n' "$n" "$state" "$health" "$ports"
+      ports="$(docker_ports_for_container "$name")"
+      printf '%-16s %-10s %-10s %s\n' "$svc" "$state" "$health" "$ports"
     done
   } | cat
 }
@@ -106,6 +118,30 @@ compose_ps_compact() {
 status_wizard() {
   local stack_dir="${STACK_DIR:-/srv/ha-stack}"
   local env_file="${ENV_FILE:-${stack_dir}/.env}"
+  export STACK_DIR="$stack_dir"
+  export ENV_FILE="$env_file"
+  export DEFAULT_COMPOSE_PATH="${DEFAULT_COMPOSE_PATH:-${stack_dir}/docker-compose.yml}"
+
+  if [[ -f "${stack_dir}/scripts/lib/i18n.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${stack_dir}/scripts/lib/i18n.sh" || true
+  fi
+  if [[ -f "${stack_dir}/scripts/lib/ui.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${stack_dir}/scripts/lib/ui.sh" || true
+  fi
+  if [[ -f "${stack_dir}/scripts/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${stack_dir}/scripts/lib/common.sh" || true
+  fi
+  if [[ -f "${stack_dir}/scripts/lib/env.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${stack_dir}/scripts/lib/env.sh" || true
+  fi
+  if [[ -f "${stack_dir}/scripts/lib/compose.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${stack_dir}/scripts/lib/compose.sh" || true
+  fi
 
   while true; do
     local action
@@ -122,10 +158,23 @@ status_wizard() {
         return 0
         ;;
       caddy)
-        # appelle le wizard d'install pour la partie caddy si disponible
-        if command -v bash >/dev/null 2>&1 && [[ -f "${stack_dir}/scripts/install.sh" ]]; then
-          bash "${stack_dir}/scripts/install.sh" || true
+        # Edition Caddy dédiée (ne relance pas l'install complète)
+        if [[ -f "${stack_dir}/scripts/lib/env.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/env.sh" || true
         fi
+        if [[ -f "${stack_dir}/scripts/lib/ui.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/ui.sh" || true
+        fi
+        if [[ -f "${stack_dir}/scripts/lib/caddy.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/caddy.sh" || true
+        fi
+
+        export STACK_DIR="$stack_dir"
+        export ENV_FILE="$env_file"
+        prompt_caddy_domain || true
         ;;
       backup)
         # On charge les libs si pas déjà chargées (status.sh est sourcé par install.sh, mais peut être utilisé isolément).
@@ -150,11 +199,10 @@ status_wizard() {
         export RESTIC_PASS="${RESTIC_DIR}/password"
 
         # Mot de passe restic + timer
-        if [[ -f "${stack_dir}/scripts/install.sh" ]]; then
-          # On réutilise la logique existante (setup_restic_password + setup_systemd_backup)
-          # shellcheck source=/dev/null
-          source "${stack_dir}/scripts/install.sh" || true
+        if command -v setup_restic_password >/dev/null 2>&1; then
           setup_restic_password || true
+        fi
+        if command -v setup_systemd_backup >/dev/null 2>&1; then
           setup_systemd_backup || true
         fi
 

@@ -39,7 +39,36 @@ choose_compose_source() {
       ;;
   esac
 
+  compose_write_path || true
+
   return 0
+}
+
+compose_write_path() {
+  [[ -n "${STACK_DIR:-}" ]] || return 0
+  [[ -n "${COMPOSE_PATH:-}" ]] || return 0
+  printf '%s\n' "$COMPOSE_PATH" > "${STACK_DIR}/.compose_path"
+  chmod 600 "${STACK_DIR}/.compose_path" || true
+}
+
+compose_path_resolve() {
+  if [[ -n "${COMPOSE_PATH:-}" && -f "${COMPOSE_PATH}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${STACK_DIR:-}" && -f "${STACK_DIR}/.compose_path" ]]; then
+    COMPOSE_PATH="$(cat "${STACK_DIR}/.compose_path" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${COMPOSE_PATH:-}" ]]; then
+    COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"
+  fi
+}
+
+compose_container_id() {
+  local service="$1"
+  compose_path_resolve
+  docker compose -f "$COMPOSE_PATH" ps -q "$service" 2>/dev/null || true
 }
 
 setup_compose_prereqs() {
@@ -53,6 +82,7 @@ setup_compose_prereqs() {
 }
 
 start_stack() {
+  compose_path_resolve
   if ! req_bin docker; then
     whi_info "Docker" "Docker n'est pas installé. Impossible de démarrer la stack."
     return 1
@@ -75,4 +105,3 @@ start_stack() {
 
   (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
 }
-

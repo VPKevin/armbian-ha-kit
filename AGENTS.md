@@ -109,6 +109,9 @@ docker run --rm -it debian:bookworm bash
 apt-get update && apt-get install -y sudo curl
 curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/main/bootstrap.sh \
   | sudo bash -s -- --ref main
+
+# Local source (no download), e.g. for tests:
+sudo bash bootstrap.sh --local
 ```
 
 Expected behavior:

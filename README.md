@@ -53,6 +53,8 @@ Le script `bootstrap.sh` accepte plusieurs façons de préciser quel contenu Git
 - `--ref <tag|commit|branch>` ou `--ref=<value>` : télécharge l'archive correspondant au ref Git (tag, SHA, ou nom de branche).
 - `--branch <branch>` ou `--branch=<value>` ou `-b <branch>` : alias de `--ref` — même effet.
 - `--dir <install-dir>` : change le répertoire d'installation (variable d'environnement `HA_INSTALL_DIR`).
+- `--source <remote|local>` : source du bootstrap. `remote` télécharge l’archive GitHub (défaut), `local` synchronise le repo local (pas de download).
+- `--local` : alias de `--source local`.
 - `--dry-run` : affiche les actions prévues sans rien modifier (utile pour valider ce que fera le bootstrap). En `--dry-run` le script n'exige pas `sudo`.
 
 Exemples :
