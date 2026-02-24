@@ -1,18 +1,18 @@
-# tests - Environnements de test
+# tests - Environnements de test (usage par volume Docker uniquement)
 
-Ce dossier contient un Dockerfile multi-target pour deux usages :
+Ce dossier fournit un `Dockerfile` multi-target et des instructions pour tester le bootstrap sur une image proche d'une box Armbian sans créer de dossier physique sur l'hôte : tout se fait via des volumes Docker.
 
-- `lint` : image légère (Debian slim) avec outils de lint (shellcheck, shfmt, bats).
-- `armbian` : image proche d'une box Armbian (basée sur `ophub/armbian-trixie`) configurée pour exécuter le `bootstrap.sh` comme sur une box.
+Principes
+- Aucune référence ni création de dossier physique sur l'hôte : on utilise un volume Docker dédié (ex: `ha-stack`).
+- Avantages : isolation, pas de problèmes de permissions/UID, nettoyage simple (`docker volume rm`).
+- Le README ci‑dessous donne les commandes manuelles pour créer le volume, builder l'image et lancer le bootstrap.
 
 Fichiers importants
-- `tests/Dockerfile` : Dockerfile multi-target (lint + armbian)
-- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini)
-- `tests/run-smoke.sh` : smoke tests pour vérifier présence du client Docker et interaction avec le socket
+- `tests/Dockerfile` : Dockerfile multi-target (targets `lint` et `armbian`).
+- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini).
+- `tests/run-smoke.sh` : smoke tests pour vérifier la présence du client Docker et interaction avec le socket.
 
-Builder et utiliser
-
-1) Target `lint` (rapide, local)
+1) Target `lint` (usage rapide)
 
 Construire l'image `lint` :
 
@@ -23,69 +23,102 @@ docker build --target lint -t armbian-tests:lint -f tests/Dockerfile .
 Exemple d'utilisation (shellcheck sur les scripts) :
 
 ```bash
-docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint \
-  shellcheck scripts/*.sh
+docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint shellcheck scripts/*.sh
 ```
 
-2) Target `armbian` (simule une box Armbian, arm64)
+2) Target `armbian` (simule une box Armbian, utilisation par volume Docker)
 
-Sur macOS (x86), utilisez `buildx` + qemu pour builder l'image arm64 :
+Builder l'image `armbian` (sur macOS/x86 utilisez buildx + qemu) :
 
+activer buildx (si nécessaire) :
 ```bash
-# activer buildx (si nécessaire)
 docker buildx create --use || true
-# optionnel : initialiser qemu (Docker Desktop le fait souvent)
-# docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-
-# builder l'image arm64 et la charger localement (--load)
+```
+builder l'image arm64 et la charger localement (--load) :
+```bash
 docker buildx build --platform linux/arm64 --target armbian -t armbian-tests:armbian -f tests/Dockerfile --load .
 ```
 
-Exécuter le container (dry-run, ne démarre pas la stack Docker de l'hôte) :
+3) Créer un volume Docker et lancer le bootstrap (manuellement)
+
+- Créer le volume :
 
 ```bash
-mkdir -p /tmp/ha-stack-dry
-sudo chown "$(id -u):$(id -g)" /tmp/ha-stack-dry
+docker volume create ha-stack
+```
 
+- Dry-run (recommandé) : exécuter le bootstrap dans le conteneur et écrire dans le volume sans donner accès au démon Docker de l'hôte :
+
+```bash
 docker run --platform linux/arm64 --rm -it \
   -v "$(pwd)":/repo:ro \
-  -v /tmp/ha-stack-dry:/srv/ha-stack \
+  -v ha-stack:/srv/ha-stack \
   --workdir /repo \
   --user root \
   armbian-tests:armbian
 ```
 
-Exécuter la version réelle (équivalent à `sudo bash bootstrap.sh`, le script pourra lancer `docker compose up -d`) :
+- Si vous voulez pinner une ref du bootstrap (tag/sha) :
 
 ```bash
-mkdir -p /tmp/ha-stack-test
-sudo chown "$(id -u):$(id -g)" /tmp/ha-stack-test
+docker run --platform linux/arm64 --rm -it \
+  -e HA_REF=v1.2.3 \
+  -v "$(pwd)":/repo:ro \
+  -v ha-stack:/srv/ha-stack \
+  --workdir /repo \
+  --user root \
+  armbian-tests:armbian
+```
 
+- Exécution réelle (équivalent à `sudo bash bootstrap.sh`) — le script pourra lancer `docker compose up -d` :
+
+> ATTENTION : cela nécessite de monter le socket Docker de l'hôte et donne au conteneur un contrôle total sur le démon Docker.
+
+```bash
 docker run --platform linux/arm64 --rm -it \
   -v "$(pwd)":/repo:ro \
-  -v /tmp/ha-stack-test:/srv/ha-stack \
+  -v ha-stack:/srv/ha-stack \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --workdir /repo \
   --user root \
   armbian-tests:armbian
 ```
 
-Astuce : pour pinner une version du bootstrap, définissez la variable d'environnement `HA_REF` (ex: `-e HA_REF=v1.2.3`).
+4) Inspecter et récupérer les fichiers du volume
 
-Nettoyage / fichiers redondants
+- Lister le contenu du volume :
 
-Les anciens Dockerfiles spécifiques (`Dockerfile.arm64`, `Dockerfile.armbian-trixie`) et les README doublons ont été marqués comme dépréciés. Si vous préférez, je peux déplacer ces fichiers dans `tests/deprecated/` pour garder le dossier propre.
+```bash
+docker run --rm -v ha-stack:/data alpine:3.18 ls -la /data
+```
 
-Sécurité
+- Afficher le fichier `.env` généré :
 
-- Monter `/var/run/docker.sock` donne au conteneur un accès total au démon Docker de l'hôte — à n'utiliser que sur des machines de confiance.
-- L'entrypoint télécharge et exécute un script depuis GitHub. Pour les installations reproductibles, pinner `HA_REF` (tag ou SHA) est fortement recommandé.
+```bash
+docker run --rm -v ha-stack:/data alpine:3.18 cat /data/.env
+```
+
+- Copier le contenu du volume vers un dossier hôte (si vous souhaitez l'analyser localement) :
+
+```bash
+mkdir -p ./out
+docker run --rm -v ha-stack:/data -v "$(pwd)/out":/out alpine:3.18 sh -c "cp -a /data/. /out/"
+```
+
+5) Nettoyage
+
+- Supprimer le volume lorsque vous avez fini :
+
+```bash
+docker volume rm ha-stack
+```
+
+6) Sécurité & bonnes pratiques
+
+- N'utilisez le montage `/var/run/docker.sock` que sur des machines de confiance.
+- Pour des runs reproductibles, pinnez la ref du bootstrap (`-e HA_REF=...`).
+- Ce README n'utilise aucun script helper : toutes les commandes nécessaires sont documentées ci‑dessous et utilisent exclusivement des volumes Docker.
 
 Support
 
-Si vous voulez, je peux :
-- archiver (`git mv`) les anciens fichiers dans `tests/deprecated/`,
-- ajouter un script helper `tests/run-bootstrap-dry.sh`,
-- ajouter un job GitHub Actions (lint + build arm) pour CI.
-
-Dites-moi ce que vous préférez que je fasse ensuite.
+Si vous souhaitez que j'ajoute un job GitHub Actions (lint + build arm) ou d'autres instructions, dites‑le et je l'ajouterai.
