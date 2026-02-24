@@ -9,15 +9,95 @@ is_interactive_tty() {
   [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
 }
 
-apt_install() {
+# Répertoire d'état persistant (suivi des paquets installés par le kit).
+# Peut être surchargé via AHK_STATE_DIR.
+apt_state_dir() {
+  echo "${AHK_STATE_DIR:-/var/lib/armbian-ha-kit}"
+}
+
+apt_state_file() {
+  echo "$(apt_state_dir)/apt-installed.list"
+}
+
+apt_state_init() {
+  local dir
+  dir="$(apt_state_dir)"
+  mkdir -p "$dir"
+  chmod 700 "$dir" 2>/dev/null || true
+  touch "$(apt_state_file)" 2>/dev/null || true
+}
+
+apt_state_add() {
+  local pkg="$1"
+  apt_state_init
+  local f
+  f="$(apt_state_file)"
+  # pas de doublons
+  grep -Fxq "$pkg" "$f" 2>/dev/null || printf '%s\n' "$pkg" >>"$f"
+}
+
+apt_state_list() {
+  local f
+  f="$(apt_state_file)"
+  [[ -f "$f" ]] || return 0
+  # ignore lignes vides/commentaires
+  grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
+}
+
+apt_is_installed() {
+  local pkg="$1"
+  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"
+}
+
+apt_update_once() {
   export DEBIAN_FRONTEND=noninteractive
 
-  # Évite de faire `apt-get update` à chaque interaction. On le fait une fois par run
-  # (ou si l'index est ancien/absent) pour limiter le bruit et accélérer.
+  # Évite de faire `apt-get update` plusieurs fois (même run) et si l'index est récent.
+  if [[ "${__AHK_APT_UPDATED:-0}" -eq 1 ]]; then
+    return 0
+  fi
+
   local stamp="/var/lib/apt/periodic/update-success-stamp"
   if [[ ! -f "$stamp" ]] || find "$stamp" -mmin +60 >/dev/null 2>&1; then
     apt-get update -y
   fi
 
-  apt-get install -y "$@"
+  __AHK_APT_UPDATED=1
+}
+
+# Installe des paquets uniquement s'ils ne sont pas déjà présents.
+# Et enregistre dans l'état uniquement ceux qui n'étaient pas installés avant.
+apt_install() {
+  export DEBIAN_FRONTEND=noninteractive
+
+  local to_install=()
+  local requested=()
+  local pkg
+
+  for pkg in "$@"; do
+    [[ -n "${pkg:-}" ]] || continue
+    requested+=("$pkg")
+    if ! apt_is_installed "$pkg"; then
+      to_install+=("$pkg")
+    fi
+  done
+
+  # Rien à faire.
+  if [[ ${#to_install[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  apt_update_once
+  apt-get install -y "${to_install[@]}"
+
+  # Trace uniquement les paquets explicitement demandés et réellement nouvellement installés.
+  for pkg in "${requested[@]}"; do
+    if apt_is_installed "$pkg"; then
+      # Si le paquet était absent au début, il est forcément dans to_install.
+      # On ne met dans l'état que ceux qu'on a demandé et installé via ce script.
+      if printf '%s\n' "${to_install[@]}" | grep -Fxq "$pkg"; then
+        apt_state_add "$pkg"
+      fi
+    fi
+  done
 }

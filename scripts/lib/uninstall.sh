@@ -6,13 +6,43 @@ set -euo pipefail
 uninstall_remove_packages() {
   # Best-effort: retirer des dépendances installées par le projet.
   # On ne purge pas docker/caddy (peut être utilisé par d'autres services).
-  local pkgs=(restic cifs-utils whiptail)
 
   if ! command -v apt-get >/dev/null 2>&1; then
     return 0
   fi
 
-  apt-get remove -y "${pkgs[@]}" 2>/dev/null || true
+  local pkgs=()
+
+  # Si on a un état (nouvelle version), on l'utilise.
+  if command -v apt_state_list >/dev/null 2>&1; then
+    while IFS= read -r p; do
+      [[ -n "${p:-}" ]] || continue
+      pkgs+=("$p")
+    done < <(apt_state_list)
+  fi
+
+  # Fallback compat: anciennes installs sans fichier d'état.
+  if [[ ${#pkgs[@]} -eq 0 ]]; then
+    pkgs=(restic cifs-utils whiptail)
+  fi
+
+  # Sécurité: ne jamais retirer docker/caddy via ce mécanisme.
+  local filtered=()
+  local p
+  for p in "${pkgs[@]}"; do
+    case "$p" in
+      docker.io|docker-compose-plugin|caddy)
+        continue
+        ;;
+    esac
+    filtered+=("$p")
+  done
+
+  if [[ ${#filtered[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  apt-get remove -y "${filtered[@]}" 2>/dev/null || true
   apt-get autoremove -y 2>/dev/null || true
 }
 
