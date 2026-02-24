@@ -50,6 +50,7 @@ init_restic_repo() {
 }
 
 setup_restic_password() {
+  RESTIC_PROMPTED=0
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
     return 0
@@ -61,27 +62,55 @@ setup_restic_password() {
     return 0
   fi
 
-  if whi_yesno "Restic" "Définir un mot de passe restic maintenant ? (sinon il sera généré aléatoirement)"; then
-    while true; do
-      local p1 p2
-      p1="$(whi_pass "Restic" "Mot de passe restic (à conserver !)")" || return $?
-      p2="$(whi_pass "Restic" "Confirme le mot de passe restic")" || return $?
+  while true; do
+    local ans
+    ans="$(whi_yesno_back "Restic" "Définir un mot de passe restic maintenant ? (sinon il sera généré aléatoirement)" "yes")" || return $?
+    RESTIC_PROMPTED=1
+    if [[ "$ans" == "yes" ]]; then
+      local back_to_prompt=0
+      while true; do
+        local p1 p2
+        if ! p1="$(whi_pass "Restic" "Mot de passe restic (à conserver !)")"; then
+          local rc=$?
+          if [[ $rc -eq $UI_BACK ]]; then
+            # Retourne à la question "définir un mot de passe ?"
+            back_to_prompt=1
+            break
+          fi
+          return $rc
+        fi
+        RESTIC_PROMPTED=1
 
-      if [[ -z "${p1:-}" ]]; then
-        whi_info "Restic" "Mot de passe vide."
+        if ! p2="$(whi_pass "Restic" "Confirme le mot de passe restic")"; then
+          local rc=$?
+          if [[ $rc -eq $UI_BACK ]]; then
+            # Retourne à la saisie du mot de passe
+            continue
+          fi
+          return $rc
+        fi
+        RESTIC_PROMPTED=1
+
+        if [[ -z "${p1:-}" ]]; then
+          whi_info "Restic" "Mot de passe vide."
+          continue
+        fi
+        if [[ "$p1" != "$p2" ]]; then
+          whi_info "Restic" "Les mots de passe ne correspondent pas."
+          continue
+        fi
+
+        printf "%s" "$p1" > "$RESTIC_PASS"
+        return 0
+      done
+      if [[ $back_to_prompt -eq 1 ]]; then
         continue
       fi
-      if [[ "$p1" != "$p2" ]]; then
-        whi_info "Restic" "Les mots de passe ne correspondent pas."
-        continue
-      fi
-
-      printf "%s" "$p1" > "$RESTIC_PASS"
-      break
-    done
-  else
-    head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
-  fi
+    else
+      head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
+      return 0
+    fi
+  done
 
   chmod 600 "$RESTIC_PASS"
   return 0
@@ -145,26 +174,75 @@ restore_wizard() {
     return 1
   fi
 
-  # IMPORTANT: le menu principal propose déjà "Restaurer". Donc ici, on ne redemande
-  # pas une confirmation: si on est ici, c'est que l'utilisateur veut restaurer.
-
   whi_info "Restauration" "Astuce: il faut d'abord que le repository Restic soit accessible (NAS/USB monté)."
 
-  local repo snapshot target
-  repo="$(restic_choose_repo)" || return 1
-  snapshot="$(restic_choose_snapshot "$repo")" || return 1
-  target="$(whi_input "Restauration" "Restaurer dans quel dossier ?" "$STACK_DIR")" || return 1
+  local repo="" snapshot="" target=""
+  local steps=(restore_step_repo restore_step_snapshot restore_step_target restore_step_confirm restore_step_run)
+  local idx=0 total=${#steps[@]}
+  while (( idx < total )); do
+    local fn="${steps[$idx]}"
+    "$fn" repo snapshot target
+    local rc=$?
+    case "$rc" in
+      "$UI_OK") ((idx++)) ;;
+      "$UI_BACK")
+        if (( idx == 0 )); then
+          return "$UI_ABORT"
+        fi
+        ((idx--))
+        ;;
+      "$UI_ABORT") return "$UI_ABORT" ;;
+      *) return "$UI_ABORT" ;;
+    esac
+  done
+
+  whi_info "Restauration" "Restauration terminée dans: $target"
+  return 0
+}
+
+restore_step_repo() {
+  local _repo_var="$1" _snap_var="$2" _target_var="$3"
+  local repo
+  repo="$(restic_choose_repo)" || return $?
+  printf -v "$_repo_var" '%s' "$repo"
+  return "$UI_OK"
+}
+
+restore_step_snapshot() {
+  local _repo_var="$1" _snap_var="$2" _target_var="$3"
+  local repo="${!_repo_var}"
+  local snapshot
+  snapshot="$(restic_choose_snapshot "$repo")" || return $?
+  printf -v "$_snap_var" '%s' "$snapshot"
+  return "$UI_OK"
+}
+
+restore_step_target() {
+  local _repo_var="$1" _snap_var="$2" _target_var="$3"
+  local target
+  target="$(whi_input "Restauration" "Restaurer dans quel dossier ?" "$STACK_DIR")" || return $?
 
   if [[ "$target" == "/" || -z "$target" ]]; then
     whi_info "Restauration" "Chemin de destination invalide."
     return 1
   fi
-
   mkdir -p "$target"
+  printf -v "$_target_var" '%s' "$target"
+  return "$UI_OK"
+}
 
+restore_step_confirm() {
+  local _repo_var="$1" _snap_var="$2" _target_var="$3"
+  local repo="${!_repo_var}" snapshot="${!_snap_var}" target="${!_target_var}"
   if ! whi_confirm "Restauration" "Confirme la restauration\n\nRepo: $repo\nSnapshot: $snapshot\nCible: $target\n\nÇa peut écraser des fichiers existants."; then
-    return 1
+    return $?
   fi
+  return "$UI_OK"
+}
+
+restore_step_run() {
+  local _repo_var="$1" _snap_var="$2" _target_var="$3"
+  local repo="${!_repo_var}" snapshot="${!_snap_var}" target="${!_target_var}"
 
   export RESTIC_REPOSITORY="$repo"
   export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
@@ -173,8 +251,5 @@ restore_wizard() {
     whi_info "Restauration" "Échec de restauration. Vérifie le mot de passe, le montage NAS/USB et le réseau."
     return 1
   fi
-
-  whi_info "Restauration" "Restauration terminée dans: $target"
-  return 0
+  return "$UI_OK"
 }
-

@@ -107,14 +107,18 @@ prompt_features() {
   local enable_upnp=$default_upnp
 
   # 1) Proxy externe ? (ex: Traefik/Nginx/HAProxy sur une autre machine)
+  local ans default_item
   if [[ $default_has_proxy -eq 1 ]]; then
-    if ! whi_yesno "Exposition" "Un reverse proxy externe est actuellement configuré. Le garder ?\n\nExemples: Nginx/Traefik/HAProxy, routeur/box qui fait proxy."; then
-      has_external_proxy=0
-    fi
+    default_item="yes"
+    ans="$(whi_yesno_back "Exposition" "Un reverse proxy externe est actuellement configuré. Le garder ?\n\nExemples: Nginx/Traefik/HAProxy, routeur/box qui fait proxy." "$default_item")" || return $?
   else
-    if whi_yesno "Exposition" "As-tu déjà un reverse proxy (Nginx/Traefik/HAProxy) qui publiera Home Assistant ?\n\nSi oui: ce kit ne doit pas utiliser les ports 80/443 et Home Assistant devra faire confiance à l'IP du proxy."; then
-      has_external_proxy=1
-    fi
+    default_item="no"
+    ans="$(whi_yesno_back "Exposition" "As-tu déjà un reverse proxy (Nginx/Traefik/HAProxy) qui publiera Home Assistant ?\n\nSi oui: ce kit ne doit pas utiliser les ports 80/443 et Home Assistant devra faire confiance à l'IP du proxy." "$default_item")" || return $?
+  fi
+  if [[ "$ans" == "yes" ]]; then
+    has_external_proxy=1
+  else
+    has_external_proxy=0
   fi
 
   # Si proxy externe: on demande les IP/CIDR à autoriser dans Home Assistant (trusted_proxies).
@@ -123,7 +127,7 @@ prompt_features() {
     existing_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
 
     local proxy_ip
-    proxy_ip="$(whi_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || true
+    proxy_ip="$(whi_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || return $?
 
     # Si renseigné, on stocke. Sinon on laisse vide (mais HA pourra refuser les headers si le proxy n'est pas ajouté).
     if [[ -n "${proxy_ip:-}" ]]; then
@@ -136,13 +140,11 @@ prompt_features() {
     enable_caddy=0
   else
     if [[ $default_caddy -eq 1 ]]; then
-      if ! whi_yesno "Exposition" "Activer Caddy sur cette machine (reverse proxy + HTTPS) ?\n\nÇa utilise les ports 80/443."; then
-        enable_caddy=0
-      fi
+      ans="$(whi_yesno_back "Exposition" "Activer Caddy sur cette machine (reverse proxy + HTTPS) ?\n\nÇa utilise les ports 80/443." "yes")" || return $?
+      [[ "$ans" == "yes" ]] && enable_caddy=1 || enable_caddy=0
     else
-      if whi_yesno "Exposition" "Caddy est actuellement désactivé. Le réactiver ?\n\nÇa utilisera les ports 80/443."; then
-        enable_caddy=1
-      fi
+      ans="$(whi_yesno_back "Exposition" "Caddy est actuellement désactivé. Le réactiver ?\n\nÇa utilisera les ports 80/443." "no")" || return $?
+      [[ "$ans" == "yes" ]] && enable_caddy=1 || enable_caddy=0
     fi
   fi
 
@@ -152,13 +154,11 @@ prompt_features() {
     enable_upnp=0
   else
     if [[ $default_upnp -eq 1 ]]; then
-      if ! whi_yesno "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement."; then
-        enable_upnp=0
-      fi
+      ans="$(whi_yesno_back "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement." "yes")" || return $?
+      [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     else
-      if whi_yesno "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non."; then
-        enable_upnp=1
-      fi
+      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
+      [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     fi
   fi
 
@@ -198,7 +198,7 @@ EOF
   fi
 
   # Complète .env depuis le compose choisi (si des variables sont manquantes)
-  env_ensure_from_compose "$COMPOSE_PATH" || true
+  env_ensure_from_compose "$COMPOSE_PATH" || return $?
 
   # Charge les variables dans l’environnement du script
   # shellcheck disable=SC1090
@@ -284,11 +284,10 @@ EOF
 
     case "$action_rc" in
       "$UI_BACK")
-        # Retour depuis le résumé => quitter l'installation (retour au menu principal)
-        return 2
+        return "$UI_BACK"
         ;;
       "$UI_ABORT")
-        return 2
+        return "$UI_ABORT"
         ;;
     esac
 
@@ -297,7 +296,7 @@ EOF
         continue
         ;;
       quit)
-        return 2
+        return "$UI_ABORT"
         ;;
       finaliser)
         if whi_confirm "Résumé" "Finaliser l'installation maintenant ?"; then
@@ -366,7 +365,7 @@ EOF
                     # revenir au menu précédent (on sort de l'édition)
                     break
                   else
-                    return 2
+                    return "$UI_ABORT"
                   fi
                 fi
               fi
@@ -379,7 +378,7 @@ EOF
                   if [[ $tmp_rc -eq $UI_BACK ]]; then
                     break
                   else
-                    return 2
+                    return "$UI_ABORT"
                   fi
                 fi
               fi
@@ -392,7 +391,7 @@ EOF
                   if [[ $tmp_rc -eq $UI_BACK ]]; then
                     break
                   else
-                    return 2
+                    return "$UI_ABORT"
                   fi
                 fi
               fi
@@ -455,6 +454,127 @@ EOF
   done
 }
 
+run_install_wizard() {
+  local steps=(
+    step_choose_compose
+    step_setup_env
+    step_features
+    step_caddy
+    step_systemd
+    step_restic
+    step_backup_targets
+    step_summary
+  )
+
+  local idx=0 total=${#steps[@]}
+  while (( idx < total )); do
+    local fn="${steps[$idx]}"
+    if [[ "${WIZARD_NAV_DIR:-}" != "back" ]]; then
+      WIZARD_NAV_DIR="forward"
+    fi
+    "$fn"
+    local rc=$?
+    case "$rc" in
+      "$UI_OK")
+        WIZARD_NAV_DIR="forward"
+        ((idx++))
+        ;;
+      "$UI_BACK")
+        if (( idx == 0 )); then
+          return "$UI_ABORT"
+        fi
+        WIZARD_NAV_DIR="back"
+        ((idx--))
+        ;;
+      "$UI_ABORT")
+        return "$UI_ABORT"
+        ;;
+      *)
+        return "$UI_ABORT"
+        ;;
+    esac
+  done
+  return 0
+}
+
+step_choose_compose() {
+  choose_compose_source || return $?
+  return "$UI_OK"
+}
+
+step_setup_env() {
+  setup_env
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    return $rc
+  fi
+  if [[ "${WIZARD_NAV_DIR:-}" == "back" && "${ENV_PROMPTED:-0}" -eq 0 ]]; then
+    return "$UI_BACK"
+  fi
+  return "$UI_OK"
+}
+
+step_features() {
+  prompt_features || return $?
+  return "$UI_OK"
+}
+
+step_caddy() {
+  while true; do
+    prompt_caddy_domain
+    local rc=$?
+    case "$rc" in
+      "$UI_OK")
+        if [[ "${WIZARD_NAV_DIR:-}" == "back" && "${CADDY_PROMPTED:-0}" -eq 0 ]]; then
+          return "$UI_BACK"
+        fi
+        return "$UI_OK"
+        ;;
+      "$UI_BACK") return "$UI_BACK" ;;
+      "$UI_ABORT") return "$UI_ABORT" ;;
+      *) continue ;;
+    esac
+  done
+}
+
+step_systemd() {
+  setup_systemd_backup
+  if [[ "${WIZARD_NAV_DIR:-}" == "back" ]]; then
+    return "$UI_BACK"
+  fi
+  return "$UI_OK"
+}
+
+step_restic() {
+  setup_restic_password
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    return $rc
+  fi
+  if [[ "${WIZARD_NAV_DIR:-}" == "back" && "${RESTIC_PROMPTED:-0}" -eq 0 ]]; then
+    return "$UI_BACK"
+  fi
+  return "$UI_OK"
+}
+
+step_backup_targets() {
+  local ans
+  ans="$(whi_yesno_back "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?" "no")" || return $?
+  if [[ "$ans" == "yes" ]]; then
+    setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+  fi
+
+  ans="$(whi_yesno_back "Backup" "Rendre accessible un repository restic sur un disque USB ?" "no")" || return $?
+  if [[ "$ans" == "yes" ]]; then
+    setup_usb_backup || true
+  fi
+  return "$UI_OK"
+}
+
+step_summary() {
+  show_summary_and_edit
+}
+
 main() {
   need_root
   ensure_dirs
@@ -476,36 +596,12 @@ main() {
 
     case "$action" in
       install)
-        # Choix du compose (important avant setup_env pour compléter le .env)
-        choose_compose_source || true
-
-        setup_env
-        prompt_features
-        prompt_caddy_domain || true
-        configure_homeassistant_yaml
-        setup_systemd_backup
-        setup_restic_password
-
-        # À propos de l'ordre: sur une ré-install/migration, l'env/restic peuvent déjà exister.
-        # On propose donc d'abord de rendre accessible un repo Restic (NAS/USB) pour backup *ou restauration*.
-        if whi_yesno "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?"; then
-          setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
-        fi
-
-        if whi_yesno "Backup" "Rendre accessible un repository restic sur un disque USB ?"; then
-          setup_usb_backup || true
-        fi
-
-        # NOTE: la restauration est maintenant un choix explicite au menu principal.
-
-        local summary_rc=0
-        show_summary_and_edit || summary_rc=$?
-
-        if [[ "$summary_rc" -eq 2 ]]; then
+        if ! run_install_wizard; then
           whi_info "Installation" "Installation quittée. Rien n'a été démarré."
           continue
         fi
 
+        configure_homeassistant_yaml
         if start_stack; then
           if wait_for_health 240; then
             whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"

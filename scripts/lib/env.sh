@@ -122,6 +122,9 @@ env_ensure_from_compose() {
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 
+  # Flag for callers: did we prompt for any missing vars?
+  ENV_PROMPTED=0
+
   while IFS=$'\t' read -r name def; do
     [[ -z "${name:-}" ]] && continue
     if env_has_key "$name" "$ENV_FILE"; then
@@ -133,8 +136,9 @@ env_ensure_from_compose() {
     default="$(strip_key_prefix_if_any "$name" "$default")"
 
     local val
-    val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return 1
+    val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return $?
     env_set_kv "$name" "$val" "$ENV_FILE"
+    ENV_PROMPTED=1
   done <<< "$vars"
 
   # shellcheck disable=SC1090

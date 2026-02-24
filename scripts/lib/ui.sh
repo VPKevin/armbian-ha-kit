@@ -92,6 +92,29 @@ whi_confirm() {
   _ui_map_rc "$rc" || return $?
 }
 
+# Yes/No menu with Back via Cancel button; optional default item (yes|no).
+# stdout: "yes" or "no"
+# return: UI_OK/UI_BACK/UI_ABORT
+whi_yesno_back() {
+  local title="$1" prompt="$2" default="${3:-}"
+
+  local args=()
+  if [[ -n "${default:-}" ]]; then
+    args+=(--default-item "$default")
+  fi
+
+  local out
+  out="$(_ui_whiptail_capture --title "$title" --menu "$prompt" 12 70 2 \
+    "${args[@]}" \
+    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
+    yes "$(t YES)" \
+    no "$(t NO)")"
+  local rc=$?
+
+  _ui_map_rc "$rc" || return $?
+  printf '%s' "$out"
+}
+
 # Menu générique. Usage: whi_menu "Titre" "Prompt" H W LIST_HEIGHT key1 label1 key2 label2 ...
 # - stdout: la clé choisie
 # - return: UI_OK/UI_BACK/UI_ABORT

@@ -5,12 +5,14 @@ set -euo pipefail
 
 choose_compose_source() {
   local action
-  action=$(whiptail --title "Docker Compose" --menu "Quel docker-compose veux-tu utiliser ?" 18 84 10 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
+  if action="$(whi_menu "Docker Compose" "Quel docker-compose veux-tu utiliser ?" 18 84 10 \
     "defaut" "Utiliser ${DEFAULT_COMPOSE_PATH}" \
     "local" "Saisir un chemin local" \
-    "url" "Télécharger depuis une URL (http/https)" \
-    3>&1 1>&2 2>&3) || return 1
+    "url" "Télécharger depuis une URL (http/https)")"; then
+    :
+  else
+    return $?
+  fi
 
   case "$action" in
     defaut)
@@ -18,21 +20,21 @@ choose_compose_source() {
       ;;
     local)
       local p
-      p="$(whi_input "Docker Compose" "Chemin complet du docker-compose.yml" "$DEFAULT_COMPOSE_PATH")" || return 1
+      p="$(whi_input "Docker Compose" "Chemin complet du docker-compose.yml" "$DEFAULT_COMPOSE_PATH")" || return $?
       if [[ ! -f "$p" ]]; then
         whi_info "Docker Compose" "Fichier introuvable: $p"
-        return 1
+        return "$UI_BACK"
       fi
       COMPOSE_PATH="$p"
       ;;
     url)
       apt_install curl ca-certificates
       local u dest
-      u="$(whi_input "Docker Compose" "URL (http/https)" "")" || return 1
+      u="$(whi_input "Docker Compose" "URL (http/https)" "")" || return $?
       dest="${STACK_DIR}/docker-compose.remote.yml"
       if ! curl -fsSL "$u" -o "$dest"; then
         whi_info "Docker Compose" "Téléchargement impossible. Vérifie l'URL/réseau."
-        return 1
+        return "$UI_BACK"
       fi
       chmod 600 "$dest" || true
       COMPOSE_PATH="$dest"
@@ -41,7 +43,7 @@ choose_compose_source() {
 
   compose_write_path || true
 
-  return 0
+  return "$UI_OK"
 }
 
 compose_write_path() {

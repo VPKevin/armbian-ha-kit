@@ -89,6 +89,11 @@ Restauration (recommandée) :
     - mode NAS seul
     - mode USB seul
     - mode restore
+- Tests navigation wizard (back/abort) :
+    - Naviguer vers "Caddy" puis Back → retour à l'étape précédente, pas sortie.
+    - Depuis "Résumé", Back → étape précédente (USB), pas sortie.
+    - Depuis "Backup" (NAS/USB), Back → étape précédente (Restic).
+    - Depuis "Restore", Back remonte étape par étape (snapshot → repo → menu).
 - Vérifier création de cert Caddy (au moins en staging ACME si possible)
 - Vérifier backup timer + exécution manuelle backup
 

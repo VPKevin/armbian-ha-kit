@@ -4,6 +4,7 @@ set -euo pipefail
 # Caddy domain/email prompt + persistence.
 
 prompt_caddy_domain() {
+  CADDY_PROMPTED=0
   # Demande uniquement si Caddy est activé.
   local enable_caddy="${ENABLE_CADDY:-}"
   if [[ -z "${enable_caddy:-}" ]]; then
@@ -22,8 +23,10 @@ prompt_caddy_domain() {
   ha_domain="$(strip_key_prefix_if_any "HA_DOMAIN" "$ha_domain")"
   le_email="$(strip_key_prefix_if_any "LE_EMAIL" "$le_email")"
 
-  ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return 1
-  le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return 1
+  ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return $?
+  CADDY_PROMPTED=1
+  le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return $?
+  CADDY_PROMPTED=1
 
   ha_domain="$(strip_key_prefix_if_any "HA_DOMAIN" "$ha_domain")"
   le_email="$(strip_key_prefix_if_any "LE_EMAIL" "$le_email")"
