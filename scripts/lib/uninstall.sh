@@ -80,6 +80,19 @@ uninstall_wizard() {
   # Filtrer les paquets sensibles qu'on ne doit jamais proposer de supprimer.
   local filtered_pkgs=()
   local _p
+  # Lire le timestamp de création du fichier d'état si présent (en-tête '# created:...')
+  local state_file
+  state_file="$(apt_state_file)"
+  local state_created_ts=0
+  if [[ -f "$state_file" ]]; then
+    # extraire la première ligne # created:NUM
+    if grep -E '^# created:' "$state_file" >/dev/null 2>&1; then
+      state_created_ts=$(grep -E '^# created:' "$state_file" | head -n1 | sed -E 's/^# created:([0-9]+).*/\1/') || true
+    else
+      # fallback to file mtime
+      state_created_ts=$(file_mtime "$state_file" 2>/dev/null || echo 0)
+    fi
+  fi
   for _p in "${pkg_list[@]}"; do
     case "$_p" in
       docker.io|docker-compose-plugin|caddy)
@@ -87,8 +100,31 @@ uninstall_wizard() {
         ;;
     esac
     # N'inclure que les paquets qui sont effectivement installés
-    if apt_is_installed "$_p"; then
-      filtered_pkgs+=("$_p")
+    if ! apt_is_installed "$_p"; then
+      continue
+    fi
+
+    # Tenter d'inférer la date d'installation via le fichier dpkg info.
+    local pkg_info="/var/lib/dpkg/info/${_p}.list"
+    if [[ -f "$pkg_info" ]] && [[ "$state_created_ts" -gt 0 ]]; then
+      local pkg_mtime
+      pkg_mtime=$(file_mtime "$pkg_info" 2>/dev/null || echo 0)
+      # N'inclure que si le paquet a été installé/modifié après la création de l'état
+      if [[ "$pkg_mtime" -ge "$state_created_ts" ]]; then
+        filtered_pkgs+=("$_p")
+      else
+        # Ignorer: paquet existait probablement avant le kit
+        continue
+      fi
+    else
+      # Si on ne peut pas vérifier la date (pkg_info absent) mais que l'état
+      # contient un timestamp, considérer le paquet comme pré-existant et
+      # l'exclure (sécurité). Si l'état n'a pas de timestamp (0), inclure.
+      if [[ "$state_created_ts" -gt 0 ]]; then
+        continue
+      else
+        filtered_pkgs+=("$_p")
+      fi
     fi
   done
 
