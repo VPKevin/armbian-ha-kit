@@ -9,7 +9,7 @@ Principes
 
 Fichiers importants
 - `tests/Dockerfile` : Dockerfile multi-target (targets `lint` et `armbian`).
-- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini).
+- `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini). Il supporte maintenant `BOOTSTRAP_SOURCE=local|remote` (default remote).
 - `tests/run-smoke.sh` : smoke tests pour vérifier la présence du client Docker et interaction avec le socket.
 
 1) Target `lint` (usage rapide)
@@ -30,12 +30,10 @@ docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint shellcheck scr
 
 Builder l'image `armbian` (sur macOS/x86 utilisez buildx + qemu) :
 
-activer buildx (si nécessaire) :
 ```bash
+# activer buildx (si nécessaire)
 docker buildx create --use || true
-```
-builder l'image arm64 et la charger localement (--load) :
-```bash
+# builder l'image arm64 et la charger localement (--load)
 docker buildx build --platform linux/arm64 --target armbian -t armbian-tests:armbian -f tests/Dockerfile --load .
 ```
 
@@ -57,6 +55,20 @@ docker run --platform linux/arm64 --rm -it \
   --user root \
   armbian-tests:armbian
 ```
+
+- Exécuter le bootstrap depuis le projet local monté (option `BOOTSTRAP_SOURCE=local`) :
+
+```bash
+docker run --platform linux/arm64 --rm -it \
+  -v "$(pwd)":/repo:ro \
+  -v ha-stack:/srv/ha-stack \
+  -e BOOTSTRAP_SOURCE=local \
+  --workdir /repo \
+  --user root \
+  armbian-tests:armbian
+```
+
+> Remarque : pour que `BOOTSTRAP_SOURCE=local` fonctionne, assurez-vous que le repo local contient `bootstrap.sh` à la racine (c'est le cas si vous lancez la commande depuis la racine du dépôt montée en `/repo`).
 
 - Si vous voulez pinner une ref du bootstrap (tag/sha) :
 
