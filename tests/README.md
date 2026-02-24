@@ -12,7 +12,7 @@ Fichiers importants
 - `tests/entrypoint-bootstrap.sh` : entrypoint qui télécharge et exécute `bootstrap.sh` depuis GitHub (utilise `HA_REF` si défini). Il supporte maintenant `BOOTSTRAP_SOURCE=local|remote` (default remote) et appelle `bootstrap.sh --local` quand `BOOTSTRAP_SOURCE=local`.
 - `tests/run-smoke.sh` : smoke tests pour vérifier la présence du client Docker et interaction avec le socket.
 
-1) Target `lint` (usage rapide)
+## Target `lint` (usage rapide)
 
 Construire l'image `lint` :
 
@@ -26,9 +26,9 @@ Exemple d'utilisation (shellcheck sur les scripts) :
 docker run --rm -it -v "$(pwd)":/repo -w /repo armbian-tests:lint shellcheck scripts/*.sh
 ```
 
-2) Target `armbian` (simule une box Armbian, utilisation par volume Docker)
+## Target `armbian` (simule une box Armbian, utilisation par volume Docker)
 
-Builder l'image `armbian` (sur macOS/x86 utilisez buildx + qemu) :
+### Builder l'image `armbian` (sur macOS/x86 utilisez buildx + qemu) :
 
 ```bash
 # activer buildx (si nécessaire)
@@ -39,7 +39,7 @@ docker buildx create --use || true
 docker buildx build --platform linux/arm64 --target armbian -t armbian-tests:armbian -f tests/Dockerfile --load .
 ```
 
-3) Créer un volume Docker et lancer le bootstrap (manuellement)
+### Créer un volume Docker et lancer le bootstrap (manuellement)
 
 - Créer le volume :
 
@@ -98,7 +98,7 @@ docker run --platform linux/arm64 --rm -it \
   armbian-tests:armbian
 ```
 
-4) Inspecter et récupérer les fichiers du volume
+## Inspecter et récupérer les fichiers du volume
 
 - Lister le contenu du volume :
 
