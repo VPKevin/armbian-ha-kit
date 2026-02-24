@@ -24,7 +24,16 @@ apt_state_init() {
   dir="$(apt_state_dir)"
   mkdir -p "$dir"
   chmod 700 "$dir" 2>/dev/null || true
-  touch "$(apt_state_file)" 2>/dev/null || true
+  local f
+  f="$(apt_state_file)"
+  # Créer le fichier d'état seulement s'il n'existe pas (ne pas mettre à jour
+  # la date de modification à chaque run). Lors de la création, écrire un
+  # en-tête indiquant la date de création (epoch seconds) pour permettre
+  # des heuristiques ultérieures.
+  if [[ ! -f "$f" ]]; then
+    printf '# created:%s\n' "$(date +%s)" >"$f" 2>/dev/null || true
+    chmod 600 "$f" 2>/dev/null || true
+  fi
 }
 
 apt_state_add() {
@@ -46,7 +55,20 @@ apt_state_list() {
 
 apt_is_installed() {
   local pkg="$1"
-  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"
+  # Premièrement, interroger dpkg-query (précis).
+  if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+    return 0
+  fi
+
+  # Si dpkg-query ne trouve pas le paquet, essayer une heuristique: pour
+  # certains paquets (ex: whiptail) le binaire a le même nom que le paquet.
+  # Si un binaire du même nom est présent, considérer le paquet comme installé
+  # (évite d'enregistrer des paquets préinstallés par l'image OS).
+  if command -v "$pkg" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
 }
 
 apt_update_once() {

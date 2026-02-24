@@ -21,9 +21,10 @@ uninstall_remove_packages() {
     done < <(apt_state_list)
   fi
 
-  # Fallback compat: anciennes installs sans fichier d'état.
+  # Aucun fallback: on n'essaie pas de deviner des paquets quand l'état est manquant.
+  # Seuls les paquets explicitement enregistrés par le kit (apt_state_list) sont pris en compte.
   if [[ ${#pkgs[@]} -eq 0 ]]; then
-    pkgs=(restic cifs-utils whiptail)
+    return 0
   fi
 
   # Sécurité: ne jamais retirer docker/caddy via ce mécanisme.
@@ -35,7 +36,10 @@ uninstall_remove_packages() {
         continue
         ;;
     esac
-    filtered+=("$p")
+    # Inclure uniquement si le paquet est réellement installé sur le système.
+    if apt_is_installed "$p"; then
+      filtered+=("$p")
+    fi
   done
 
   if [[ ${#filtered[@]} -eq 0 ]]; then
@@ -56,9 +60,62 @@ uninstall_wizard() {
     remove_data=1
   fi
 
+  # Préparer la liste des paquets connus installés par le kit pour l'afficher
+  local pkg_list=()
+  if command -v apt-get >/dev/null 2>&1; then
+    if command -v apt_state_list >/dev/null 2>&1; then
+      while IFS= read -r p; do
+        [[ -n "${p:-}" ]] || continue
+        pkg_list+=("$p")
+      done < <(apt_state_list)
+    fi
+
+    # Pas de fallback : si le fichier d'état est vide/absent, on considère qu'il
+    # n'y a pas de paquets gérés par le kit et la frame sera sautée.
+    if [[ ${#pkg_list[@]} -eq 0 ]]; then
+      pkg_list=()
+    fi
+  fi
+
+  # Filtrer les paquets sensibles qu'on ne doit jamais proposer de supprimer.
+  local filtered_pkgs=()
+  local _p
+  for _p in "${pkg_list[@]}"; do
+    case "$_p" in
+      docker.io|docker-compose-plugin|caddy)
+        continue
+        ;;
+    esac
+    # N'inclure que les paquets qui sont effectivement installés
+    if apt_is_installed "$_p"; then
+      filtered_pkgs+=("$_p")
+    fi
+  done
+
+  # Si aucun paquet connu n'est à supprimer, on saute la frame de confirmation.
   local remove_pkgs=0
-  if whi_yesno "Désinstallation" "Supprimer aussi les paquets installés pour le projet (ex: restic, cifs-utils, whiptail) ?\n\nConseillé seulement si cette machine ne s'en sert pas pour autre chose."; then
-    remove_pkgs=1
+  if [[ ${#filtered_pkgs[@]} -gt 0 ]]; then
+    # Construire un message lisible et l'afficher dans une boîte distincte (msgbox gère le multi-lignes).
+    local pkg_text
+    pkg_text=$'Paquets installés par ce kit (sélectionnés pour suppression) :\n\n'
+    for _p in "${filtered_pkgs[@]}"; do
+      pkg_text+=$' - '"${_p}"$'\n'
+    done
+
+    # Afficher la liste proprement
+    whi_info "Désinstallation - paquets" "$pkg_text"
+
+    # Demander confirmation simple (yes/no). Utiliser la variante _back qui imprime "yes" ou "no".
+    local ans
+    ans="$(whi_yesno_back "Désinstallation" "Supprimer aussi les paquets installés pour le projet ?" "no")" || true
+    if [[ "${ans:-}" == "yes" ]]; then
+      remove_pkgs=1
+    else
+      remove_pkgs=0
+    fi
+  else
+    # Pas de paquet connu -> on ignore la frame
+    remove_pkgs=0
   fi
 
   # Stop stack
