@@ -249,38 +249,20 @@ print_next_steps() {
     cat <<EOF
 
 Prochaines étapes :
-  1. Vérifier le .env généré :   ${HA_INSTALL_DIR}/.env
-  2. Démarrer la stack :         cd ${HA_INSTALL_DIR} && docker compose up -d
-  3. Voir les logs :             docker compose logs -f
-  4. Accéder à Home Assistant :  http://<ip-de-la-box>:8123
-
-Mise à jour (bootstrap.sh est synchronisé dans ${HA_INSTALL_DIR} ; relance-le en pinning un tag) :
-  sudo bash ${HA_INSTALL_DIR}/bootstrap.sh --ref v1.2.3
-  # Ou le récupérer depuis GitHub :
-  # curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.2.3/bootstrap.sh | sudo bash -s -- --ref v1.2.3
-
-Rappel sécurité :
-  - Pinner un tag ou un SHA de commit pour des installs reproductibles.
-  - Ne jamais commit .env ou les dossiers de données.
+  - Dépôt installé : ${HA_INSTALL_DIR}
+  - Démarrer la stack :    cd ${HA_INSTALL_DIR} && docker compose up -d
+  - Emplacements importants : config/, caddy/, restic/, postgres/, backup/
+  - Fichier .env (si présent) : ${HA_INSTALL_DIR}/.env
 
 EOF
   else
     cat <<EOF
 
 Next steps:
-  1. Review generated .env:   ${HA_INSTALL_DIR}/.env
-  2. Start the stack:         cd ${HA_INSTALL_DIR} && docker compose up -d
-  3. Check logs:              docker compose logs -f
-  4. Access Home Assistant:   http://<box-ip>:8123
-
-Update (bootstrap.sh is synced to ${HA_INSTALL_DIR}; re-run it pinned to new tag):
-  sudo bash ${HA_INSTALL_DIR}/bootstrap.sh --ref v1.2.3
-  # Or fetch fresh from GitHub:
-  # curl -fsSL https://raw.githubusercontent.com/VPKevin/armbian-ha-kit/v1.2.3/bootstrap.sh | sudo bash -s -- --ref v1.2.3
-
-Security reminder:
-  - Pin to a specific tag or commit SHA for reproducible installs.
-  - Never commit .env or data directories to version control.
+  - Repository installed at: ${HA_INSTALL_DIR}
+  - Start the stack:         cd ${HA_INSTALL_DIR} && docker compose up -d
+  - Important locations:     config/, caddy/, restic/, postgres/, backup/
+  - .env (if present):       ${HA_INSTALL_DIR}/.env
 
 EOF
   fi
