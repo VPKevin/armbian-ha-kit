@@ -614,7 +614,7 @@ main() {
         ;;
 
       restore)
-        choose_compose_source || true
+        compose_path_resolve || true
         setup_env
         # En mode restauration, on évite les questions d'exposition (Caddy/UPnP/proxy).
         # On a seulement besoin de variables de base + accès au repo Restic.
