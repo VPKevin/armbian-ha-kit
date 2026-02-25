@@ -46,8 +46,13 @@ uninstall_remove_packages() {
     return 0
   fi
 
-  apt-get remove -y "${filtered[@]}" 2>/dev/null || true
-  apt-get autoremove -y 2>/dev/null || true
+  if command -v ui_run >/dev/null 2>&1; then
+    ui_run "Supprimer paquets: ${filtered[*]}" -- apt-get remove -y "${filtered[@]}" || true
+    ui_run "Auto-remove" -- apt-get autoremove -y || true
+  else
+    apt-get remove -y "${filtered[@]}" 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+  fi
 }
 
 uninstall_wizard() {
@@ -156,7 +161,11 @@ uninstall_wizard() {
 
   # Stop stack
   if [[ -d "$STACK_DIR" ]]; then
-    (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" down --remove-orphans) || true
+    if command -v ui_run >/dev/null 2>&1; then
+      (cd "$STACK_DIR" && ui_run "Stop stack" -- docker compose -f "$COMPOSE_PATH" down --remove-orphans) || true
+    else
+      (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" down --remove-orphans) || true
+    fi
   fi
 
   # systemd

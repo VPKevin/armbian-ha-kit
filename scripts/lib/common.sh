@@ -81,7 +81,11 @@ apt_update_once() {
 
   local stamp="/var/lib/apt/periodic/update-success-stamp"
   if [[ ! -f "$stamp" ]] || find "$stamp" -mmin +60 >/dev/null 2>&1; then
-    apt-get update -y
+    if command -v ui_run >/dev/null 2>&1; then
+      ui_run "apt: update" -- apt-get update -y
+    else
+      apt-get update -y
+    fi
   fi
 
   __AHK_APT_UPDATED=1
@@ -110,7 +114,11 @@ apt_install() {
   fi
 
   apt_update_once
-  apt-get install -y "${to_install[@]}"
+  if command -v ui_run >/dev/null 2>&1; then
+    ui_run "Installer paquets: ${to_install[*]}" -- apt-get install -y "${to_install[@]}"
+  else
+    apt-get install -y "${to_install[@]}"
+  fi
 
   # Trace uniquement les paquets explicitement demandés et réellement nouvellement installés.
   for pkg in "${requested[@]}"; do

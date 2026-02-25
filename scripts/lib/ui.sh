@@ -131,3 +131,153 @@ whi_menu() {
   _ui_map_rc "$rc" || return $?
   printf '%s' "$out"
 }
+
+# ----------------------
+# UI helpers: run/notify/progress
+# ----------------------
+
+# Default log dir (can be overridden via UI_LOG_DIR env var). STACK_DIR is defined elsewhere.
+UI_LOG_DIR="${UI_LOG_DIR:-${STACK_DIR:-/srv/ha-stack}/logs}"
+
+_ui_ensure_log_dir() {
+  mkdir -p "$UI_LOG_DIR" 2>/dev/null || true
+  chmod 700 "$UI_LOG_DIR" 2>/dev/null || true
+}
+
+# ui_notify: affiche une ligne de statut simple.
+# ui_notify "Libellé" [status]
+# status: empty (in progress), ok, fail
+ui_notify() {
+  local label="$1" status="${2:-}"
+  case "$status" in
+    ok)
+      printf "\r✓ %s\n" "$label"
+      ;;
+    fail)
+      printf "\r✗ %s\n" "$label"
+      ;;
+    *)
+      printf "→ %s …\n" "$label"
+      ;;
+  esac
+}
+
+# ui_run: exécute une commande, journalise la sortie et affiche une ligne de statut.
+# Usage: ui_run "Libellé" -- <command> [args...]
+# Expose: UI_LAST_LOG, UI_LAST_EXIT
+ui_run() {
+  local label="${1:-}"; shift || true
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  if [[ -z "$label" ]]; then
+    echo "ui_run: missing label" >&2
+    return 2
+  fi
+  if [[ $# -eq 0 ]]; then
+    echo "ui_run: missing command" >&2
+    return 2
+  fi
+
+  _ui_ensure_log_dir
+  local ts pid rc
+  ts="$(date +%Y%m%d-%H%M%S)"
+  local safe_label
+  safe_label="$(printf '%s' "$label" | tr ' /' '__' | tr -cd '[:alnum:]_-')"
+  local logf="$UI_LOG_DIR/${ts}-$$-${safe_label}.log"
+
+  UI_LAST_LOG="$logf"
+
+  # Mode verbeux: stream la sortie en direct + log via tee
+  if [[ "${UI_VERBOSE:-0}" -eq 1 ]]; then
+    printf "→ %s …\n" "$label"
+    # shellcheck disable=SC2046
+    "$@" 2>&1 | tee -a "$logf"
+    rc=${PIPESTATUS[0]:-0}
+    UI_LAST_EXIT=${rc}
+    if [[ $rc -eq 0 ]]; then
+      printf "✓ %s\n" "$label"
+    else
+      printf "✗ %s (voir log: %s)\n" "$label" "$logf"
+    fi
+    return $rc
+  fi
+
+  # Mode terse: rediriger la sortie vers le log et afficher un spinner
+  printf "→ %s …" "$label"
+  (
+    # Exécuter la commande dans un sous-shell pour capturer sortie dans log
+    "$@" >"$logf" 2>&1
+  ) &
+  pid=$!
+
+  local spinner=("/" "-" "\\" "|")
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    local sc="${spinner[i % ${#spinner[@]}]}"
+    printf "\r→ %s … %s" "$label" "$sc"
+    i=$((i+1))
+    sleep 0.12
+  done
+  wait "$pid" || rc=$?
+  rc=${rc:-0}
+  UI_LAST_EXIT=${rc}
+
+  if [[ $rc -eq 0 ]]; then
+    printf "\r✓ %s\n" "$label"
+  else
+    printf "\r✗ %s (voir log: %s)\n" "$label" "$logf"
+  fi
+
+  return $rc
+}
+
+# ui_progress: gestion simple d'une progression basée sur étapes.
+# ui_progress start "Label" total_steps
+# ui_progress step
+# ui_progress finish [ok|fail]
+ui_progress() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    start)
+      UI_PROGRESS_LABEL="${2:-Progress}"
+      UI_PROGRESS_TOTAL=${3:-0}
+      UI_PROGRESS_CUR=0
+      UI_PROGRESS_BAR_WIDTH=40
+      printf "→ %s … 0%%" "$UI_PROGRESS_LABEL"
+      ;;
+    step)
+      UI_PROGRESS_CUR=$((UI_PROGRESS_CUR + 1))
+      if [[ ${UI_PROGRESS_TOTAL:-0} -gt 0 ]]; then
+        local pct=$((UI_PROGRESS_CUR * 100 / UI_PROGRESS_TOTAL))
+        local filled=$(( (pct * UI_PROGRESS_BAR_WIDTH) / 100 ))
+        local empty=$((UI_PROGRESS_BAR_WIDTH - filled))
+        local bar
+        bar="$(printf '%0.s#' $(seq 1 $filled))$(printf '%0.s-' $(seq 1 $empty))"
+        printf "\r→ %s … %3d%% [%s]" "$UI_PROGRESS_LABEL" "$pct" "$bar"
+        if [[ $UI_PROGRESS_CUR -ge $UI_PROGRESS_TOTAL ]]; then
+          printf "\n"
+        fi
+      else
+        # fallback: spinner-like output
+        local s=("/" "-" "\\" "|")
+        local idx=$((UI_PROGRESS_CUR % 4))
+        printf "\r→ %s … %s" "$UI_PROGRESS_LABEL" "${s[idx]}"
+      fi
+      ;;
+    finish)
+      local status="${2:-ok}"
+      if [[ "$status" == "ok" ]]; then
+        printf "\r✓ %s\n" "${UI_PROGRESS_LABEL:-Progress}"
+      else
+        printf "\r✗ %s\n" "${UI_PROGRESS_LABEL:-Progress}"
+      fi
+      UI_PROGRESS_LABEL=""
+      UI_PROGRESS_TOTAL=0
+      UI_PROGRESS_CUR=0
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}

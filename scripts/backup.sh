@@ -44,11 +44,20 @@ mkdir -p "$BACKUP_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP_FILE="${BACKUP_DIR}/postgres-${TS}.sql"
 
-echo "$LOG_TAG Dumping PostgreSQL database to $DUMP_FILE.gz ..."
-docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" "$(pg_container_id)" \
-  pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --no-owner --no-privileges \
-  > "$DUMP_FILE"
-gzip -f "$DUMP_FILE"
+if command -v ui_run >/dev/null 2>&1; then
+  ui_notify "Dump PostgreSQL vers ${DUMP_FILE}.gz"
+  # Exécuter la commande via bash -lc pour que la redirection soit faite dans
+  # le sous-shell invoqué par ui_run (sinon la redirection serait appliquée
+  # par le shell appelant et le dump n'irait pas dans $DUMP_FILE).
+  ui_run "pg_dump" -- bash -lc "docker exec -e PGPASSWORD=\'${POSTGRES_PASSWORD}\' $(pg_container_id) pg_dump -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\" --no-owner --no-privileges > \"${DUMP_FILE}\"" || true
+  gzip -f "$DUMP_FILE"
+else
+  echo "$LOG_TAG Dumping PostgreSQL database to $DUMP_FILE.gz ..."
+  docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" "$(pg_container_id)" \
+    pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --no-owner --no-privileges \
+    > "$DUMP_FILE"
+  gzip -f "$DUMP_FILE"
+fi
 
 # Sauvegarder avec restic vers les repos configurés (NAS/USB)
 # Les repos sont décrits dans ${STACK_DIR}/restic/repos.conf
@@ -73,15 +82,25 @@ while IFS= read -r repo; do
 
   export RESTIC_REPOSITORY="$repo"
 
-  echo "$LOG_TAG Restic backup to: $RESTIC_REPOSITORY"
-  restic backup "${STACK_DIR}/config" "${STACK_DIR}/backup" --tag homeassistant
+  if command -v ui_run >/dev/null 2>&1; then
+    ui_notify "Restic -> $RESTIC_REPOSITORY"
+    ui_run "restic backup -> ${RESTIC_REPOSITORY}" -- restic backup "${STACK_DIR}/config" "${STACK_DIR}/backup" --tag homeassistant || true
+    ui_run "restic forget -> ${RESTIC_REPOSITORY}" -- restic forget --keep-daily 7 --keep-weekly 10 --prune || true
+  else
+    echo "$LOG_TAG Restic backup to: $RESTIC_REPOSITORY"
+    restic backup "${STACK_DIR}/config" "${STACK_DIR}/backup" --tag homeassistant
 
-  echo "$LOG_TAG Retention (daily=7 weekly=10) on: $RESTIC_REPOSITORY"
-  restic forget --keep-daily 7 --keep-weekly 10 --prune
+    echo "$LOG_TAG Retention (daily=7 weekly=10) on: $RESTIC_REPOSITORY"
+    restic forget --keep-daily 7 --keep-weekly 10 --prune
+  fi
 
 done < "$REPOS_CONF"
 
 # Nettoyage des dumps locaux très anciens (au cas où restic n'est pas dispo)
 find "$BACKUP_DIR" -type f -name "postgres-*.sql.gz" -mtime +21 -delete || true
 
-echo "$LOG_TAG Done."
+if command -v ui_notify >/dev/null 2>&1; then
+  ui_notify "Backup terminé" ok
+else
+  echo "$LOG_TAG Done."
+fi

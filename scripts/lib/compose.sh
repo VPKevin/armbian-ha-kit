@@ -105,5 +105,9 @@ start_stack() {
     profiles+=("--profile" "caddy")
   fi
 
-  (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
+  if command -v ui_run >/dev/null 2>&1; then
+    (cd "$STACK_DIR" && ui_run "Démarrer stack" -- docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
+  else
+    (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
+  fi
 }
