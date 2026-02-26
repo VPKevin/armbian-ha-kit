@@ -77,7 +77,18 @@ whi_yesno() {
 
 whi_info() {
   local title="$1" msg="$2"
-  whiptail --title "$title" --msgbox "$msg" 12 80 --ok-button "$(t OK)"
+
+  # En environnement non-interactif (CI, container sans /dev/tty), whiptail peut bloquer
+  # ou échouer. On fallback sur une sortie console.
+  if ! is_interactive_tty; then
+    printf '\n[%s]\n%s\n\n' "$title" "$msg" >&2
+    return "$UI_OK"
+  fi
+
+  # Exécute via le wrapper pour éviter que `set -e` casse le flot sur Cancel/Esc.
+  _ui_whiptail_capture --title "$title" --msgbox "$msg" 12 80 --ok-button "$(t OK)" >/dev/null
+  local rc=$?
+  _ui_map_rc "$rc" || return $?
 }
 
 whi_confirm() {

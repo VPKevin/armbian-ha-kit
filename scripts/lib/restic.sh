@@ -118,7 +118,54 @@ setup_restic_password() {
 
 restic_choose_repo() {
   if [[ ! -f "$RESTIC_REPOS" || ! -s "$RESTIC_REPOS" ]]; then
-    whi_info "Restic" "Aucun repository dans ${RESTIC_REPOS}. Configure d'abord un NAS/USB."
+    whi_info "Restic" "Aucun repository dans ${RESTIC_REPOS}.\n\nPour restaurer, il faut d'abord rendre accessible un repository (NAS/USB monté) et l'ajouter à la configuration."
+
+    # En mode interactif, on peut guider l'utilisateur pour configurer un target.
+    if is_interactive_tty && command -v whi_menu >/dev/null 2>&1; then
+      local choice rc
+      if choice="$(whi_menu "Restic" "Configurer un repository de sauvegarde maintenant ?" 18 90 10 \
+        "nas" "Configurer un NAS (SMB/CIFS)" \
+        "usb" "Configurer un disque USB" \
+        "cancel" "Annuler")"; then
+        rc=$UI_OK
+      else
+        rc=$?
+      fi
+
+      case "$rc" in
+        "$UI_BACK"|"$UI_ABORT")
+          return "$rc"
+          ;;
+      esac
+
+      case "$choice" in
+        nas)
+          if command -v setup_nas_smb >/dev/null 2>&1; then
+            setup_nas_smb || true
+          else
+            whi_info "Restic" "Setup NAS indisponible (setup_nas_smb introuvable)."
+          fi
+          ;;
+        usb)
+          if command -v setup_usb_backup >/dev/null 2>&1; then
+            setup_usb_backup || true
+          else
+            whi_info "Restic" "Setup USB indisponible (setup_usb_backup introuvable)."
+          fi
+          ;;
+        cancel|*)
+          return "$UI_BACK"
+          ;;
+      esac
+
+      # Si un repo vient d'être ajouté, retenter la sélection.
+      if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
+        # relance la fonction (une seule fois) pour construire les choices
+        restic_choose_repo
+        return $?
+      fi
+    fi
+
     return 1
   fi
 
