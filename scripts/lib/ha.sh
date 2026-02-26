@@ -29,34 +29,16 @@ configure_homeassistant_yaml() {
   : "${POSTGRES_PASSWORD:=changeme}"
 
   if ! grep -q "^recorder:" "$cfg"; then
-    # Construit trusted_proxies avec indentation correcte.
-    # Par défaut: subnet docker bridge (cas proxy dans docker).
-    local trusted_lines="    - ${subnet}"
-
-    # Si PROXY_TRUSTED_PROXIES est défini dans le .env, on l'ajoute.
-    # Format attendu: "192.168.1.10,10.0.0.0/24"
-    local extra_trusted=""
-    if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
-      extra_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
-    fi
-
-    if [[ -n "${extra_trusted:-}" ]]; then
-      local line
-      while IFS= read -r line; do
-        [[ -z "${line:-}" ]] && continue
-        trusted_lines+="\n    - ${line}"
-      done < <(echo "$extra_trusted" | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-    fi
-
+    # Ajoute uniquement un bloc minimal 'recorder' si absent.
+    # IMPORTANT: nous n'écrivons plus la section 'http: trusted_proxies' dans
+    # configuration.yaml pour éviter de modifier ce fichier de configuration
+    # utilisateur. Si tu veux définir des proxies de confiance, définis
+    # l'environnement PROXY_TRUSTED_PROXIES dans ton docker-compose.yml ou
+    # dans le .env utilisé par docker-compose. Ex: PROXY_TRUSTED_PROXIES=192.168.1.10,10.0.0.0/24
     cat >> "$cfg" <<EOF
 
 recorder:
   db_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
-
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-$(printf '%b' "$trusted_lines")
 EOF
   fi
 }
