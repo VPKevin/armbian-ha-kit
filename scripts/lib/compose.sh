@@ -120,11 +120,16 @@ compose_ensure_proxy_env() {
   [[ -f "$COMPOSE_PATH" ]] || return 0
   [[ -f "${ENV_FILE:-}" ]] || return 0
 
-  local val
+  local val cleaned_val
   val="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
   [[ -n "${val:-}" ]] || return 0
 
-  # Ne rien faire si déjà présent dans le compose.
+  # Nettoie les caractères non imprimables éventuels (contrôle, retour chariot, DEL)
+  cleaned_val="$(printf '%s' "$val" | tr -d '\000-\037\177')"
+  # Trim leading/trailing whitespace
+  cleaned_val="$(echo "$cleaned_val" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+
+  # Ne rien faire si déjà présent dans le compose (quel que soit le contenu)
   if grep -q 'PROXY_TRUSTED_PROXIES' "$COMPOSE_PATH"; then
     return 0
   fi
@@ -138,12 +143,16 @@ compose_ensure_proxy_env() {
     end_line=$(wc -l < "$COMPOSE_PATH" | tr -d ' ')
   fi
 
+  # Prepare lines to insert (use quoted value to be safe in YAML)
+  local env_entry env_entry_quoted env_line indent tmp
+  env_entry_quoted="${cleaned_val//"/\"}"
+  env_entry="- PROXY_TRUSTED_PROXIES=\"${env_entry_quoted}\""
+
   # 1) Si 'environment:' existe dans le bloc, insère la ligne après.
-  local env_line indent insert_line tmp
   env_line="$(awk -v s="$home_start" -v e="$end_line" 'NR>=s && NR<=e && /^[[:space:]]*environment:/{print NR; exit}' "$COMPOSE_PATH" || true)"
   if [[ -n "$env_line" ]]; then
     indent="$(sed -n "${env_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
-    insert_line="${indent}  - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+    insert_line="${indent}  ${env_entry}"
     tmp="$(mktemp)"
     awk -v n=$((env_line+1)) -v nl="$insert_line" 'NR==n{print nl} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
     return 0
@@ -156,7 +165,7 @@ compose_ensure_proxy_env() {
     indent="$(sed -n "${envfile_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
     local l1 l2
     l1="${indent}environment:"
-    l2="${indent}  - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+    l2="${indent}  ${env_entry}"
     tmp="$(mktemp)"
     awk -v n=$((envfile_line+1)) -v l1="$l1" -v l2="$l2" 'NR==n{print l1; print l2} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
     return 0
@@ -168,9 +177,8 @@ compose_ensure_proxy_env() {
   indent="$(sed -n "${hs_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
   local b1 b2
   b1="${indent}  environment:"
-  b2="${indent}    - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+  b2="${indent}    ${env_entry}"
   tmp="$(mktemp)"
   awk -v n=$((hs_line+1)) -v l1="$b1" -v l2="$b2" 'NR==n{print l1; print l2} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
   return 0
 }
-
