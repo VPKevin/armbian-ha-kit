@@ -145,7 +145,8 @@ compose_ensure_proxy_env() {
 
   # Prepare lines to insert (use quoted value to be safe in YAML)
   local env_entry env_entry_quoted env_line indent tmp
-  env_entry_quoted="${cleaned_val//"/\"}"
+  # Escape any double quotes in the cleaned value for safe insertion into YAML
+  env_entry_quoted="${cleaned_val//\"/\\\"}"
   env_entry="- PROXY_TRUSTED_PROXIES=\"${env_entry_quoted}\""
 
   # 1) Si 'environment:' existe dans le bloc, insère la ligne après.
