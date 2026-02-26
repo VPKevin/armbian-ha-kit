@@ -123,6 +123,7 @@ env_ensure_from_compose() {
   set +a
 
   # Flag for callers: did we prompt for any missing vars?
+  # shellcheck disable=SC2034
   ENV_PROMPTED=0
 
   while IFS=$'\t' read -r name def; do
@@ -136,8 +137,16 @@ env_ensure_from_compose() {
     default="$(strip_key_prefix_if_any "$name" "$default")"
 
     local val
-    val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return $?
+    if ! is_interactive_tty; then
+      # En non-interactif (CI/tests), on ne doit pas bloquer sur un prompt.
+      # Si aucun défaut n'est fourni par le compose, on met une valeur vide.
+      val="$default"
+    else
+      val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return $?
+    fi
+
     env_set_kv "$name" "$val" "$ENV_FILE"
+    # shellcheck disable=SC2034
     ENV_PROMPTED=1
   done <<< "$vars"
 

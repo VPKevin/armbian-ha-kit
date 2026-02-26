@@ -67,9 +67,11 @@ EOF
 }
 
 test_install_sh_loaded() {
-  # Source le script pour accéder aux fonctions
+  # Charge uniquement les libs nécessaires pour ces tests.
   # shellcheck disable=SC1091
-  source "./scripts/install.sh"
+  source "./scripts/lib/ui.sh"
+  # shellcheck disable=SC1091
+  source "./scripts/lib/env.sh"
 }
 
 @test "env_set_kv ajoute une clé sans supprimer les autres" {
@@ -138,6 +140,14 @@ EOF
   : >"$ENV_FILE"
 
   run env_ensure_from_compose "$COMPOSE_PATH"
+  if [ "$status" -ne 0 ]; then
+    echo "env_ensure_from_compose status=$status" >&2
+    echo "output=$output" >&2
+    echo "--- .env ---" >&2
+    cat "$ENV_FILE" >&2 || true
+    echo "--- whiptail log ---" >&2
+    cat "$WHIPTAIL_LOG" >&2 || true
+  fi
   [ "$status" -eq 0 ]
 
   # notre whiptail stub renvoie la valeur par défaut
@@ -146,4 +156,3 @@ EOF
   run grep -E '^FOO=x$' "$ENV_FILE"
   [ "$status" -eq 0 ]
 }
-

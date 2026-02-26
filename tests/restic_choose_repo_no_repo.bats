@@ -35,10 +35,10 @@ EOF
 }
 
 @test "restic_choose_repo: sans repos.conf, n'entre pas en boucle et affiche un message" {
-  run bash -lc '
+  run bash -c '
     set -euo pipefail
     cd /repo
-    export STACK_DIR RESTIC_DIR RESTIC_REPOS RESTIC_PASS
+    export STACK_DIR RESTIC_DIR RESTIC_REPOS RESTIC_PASS WHIPTAIL_LOG
     source ./scripts/lib/i18n.sh
     source ./scripts/lib/common.sh
     source ./scripts/lib/ui.sh
@@ -49,5 +49,7 @@ EOF
   '
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Aucun repository"* ]]
+  # whi_info utilise whiptail --msgbox; on valide que l'info a bien été affichée.
+  run grep -F "Aucun repository" "$WHIPTAIL_LOG"
+  [ "$status" -eq 0 ]
 }

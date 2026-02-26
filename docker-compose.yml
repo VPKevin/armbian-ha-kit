@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - TZ=${TZ}
+      - TZ=${TZ:-UTC}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -30,7 +30,7 @@ services:
       - postgres
     env_file: .env
     environment:
-      - TZ=${TZ}
+      - TZ=${TZ:-UTC}
     volumes:
       - /srv/ha-stack/config:/config
       - /etc/localtime:/etc/localtime:ro

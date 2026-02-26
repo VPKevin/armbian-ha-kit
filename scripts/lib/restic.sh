@@ -50,6 +50,7 @@ init_restic_repo() {
 }
 
 setup_restic_password() {
+  # shellcheck disable=SC2034
   RESTIC_PROMPTED=0
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
@@ -234,7 +235,9 @@ restore_wizard() {
       "$UI_OK") ((idx++)) ;;
       "$UI_BACK")
         if (( idx == 0 )); then
-          return "$UI_ABORT"
+          # Si l'utilisateur fait "Retour" sur la 1ère étape, on remonte un BACK
+          # pour revenir au menu principal plutôt que d'abandonner tout le script.
+          return "$UI_BACK"
         fi
         ((idx--))
         ;;

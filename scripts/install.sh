@@ -614,13 +614,20 @@ main() {
         ;;
 
       restore)
-        compose_path_resolve || true
-        setup_env
-        # En mode restauration, on évite les questions d'exposition (Caddy/UPnP/proxy).
-        # On a seulement besoin de variables de base + accès au repo Restic.
+        # En restauration sur install neuve, il ne faut pas demander des variables compose
+        # (ex: TZ) avant d'avoir restauré le dossier qui contient le .env.
+        # On laisse le wizard Restic choisir la cible, puis on recharge l'env ensuite.
         if restore_wizard; then
+          # Si la restauration a ramené un .env, on peut maintenant charger/compléter.
+          compose_path_resolve || true
+          setup_env || true
           whi_info "Restauration" "Restauration terminée."
         else
+          rc=$?
+          if [[ $rc -eq $UI_BACK ]]; then
+            # Retour au menu principal
+            continue
+          fi
           whi_info "Restauration" "Restauration annulée / échouée."
         fi
         ;;

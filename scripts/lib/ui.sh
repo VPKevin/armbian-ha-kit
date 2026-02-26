@@ -198,6 +198,8 @@ ui_run() {
   local logf="$UI_LOG_DIR/${ts}-$$-${safe_label}.log"
 
   UI_LAST_LOG="$logf"
+  # shellcheck disable=SC2034
+  UI_LAST_LOG="$logf"
 
   # Mode verbeux: stream la sortie en direct + log via tee
   if [[ "${UI_VERBOSE:-0}" -eq 1 ]]; then
@@ -205,6 +207,8 @@ ui_run() {
     # shellcheck disable=SC2046
     "$@" 2>&1 | tee -a "$logf"
     rc=${PIPESTATUS[0]:-0}
+    UI_LAST_EXIT=${rc}
+    # shellcheck disable=SC2034
     UI_LAST_EXIT=${rc}
     if [[ $rc -eq 0 ]]; then
       printf "✓ %s\n" "$label"
@@ -232,6 +236,8 @@ ui_run() {
   done
   wait "$pid" || rc=$?
   rc=${rc:-0}
+  UI_LAST_EXIT=${rc}
+  # shellcheck disable=SC2034
   UI_LAST_EXIT=${rc}
 
   if [[ $rc -eq 0 ]]; then

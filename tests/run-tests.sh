@@ -2,17 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE_NAME="armbian-ha-kit-tests"
+LINT_IMAGE_NAME="armbian-ha-kit-tests-lint"
+ARM_IMAGE_NAME="armbian-ha-kit-tests"
 
 cd "$ROOT_DIR"
 
-docker build -f tests/Dockerfile -t "$IMAGE_NAME" .
-
-# Permet de tester soit le bootstrap remote, soit le bootstrap local du repo monté.
-# Par défaut on garde le comportement actuel (remote) pour coller au parcours utilisateur.
-BOOTSTRAP_SOURCE="${BOOTSTRAP_SOURCE:-remote}"
+# 1) Lint + unit tests (Bats) sans interaction
+docker build -f tests/Dockerfile --target lint -t "$LINT_IMAGE_NAME" .
 
 docker run --rm -t \
-  -e "BOOTSTRAP_SOURCE=${BOOTSTRAP_SOURCE}" \
+  --entrypoint /bin/bash \
   -v "$ROOT_DIR:/repo" \
-  "$IMAGE_NAME"
+  -w /repo \
+  "$LINT_IMAGE_NAME" \
+  -lc "shellcheck -S error -e SC2034,SC2086 -x scripts/**/*.sh scripts/*.sh tests/*.bats && bats -t -r tests"
+
+# 2) Smoke test dans une image proche Armbian (sans lancer le bootstrap interactif)
+docker build -f tests/Dockerfile --target armbian -t "$ARM_IMAGE_NAME" .
+
+docker run --rm -t \
+  --entrypoint /bin/bash \
+  -v "$ROOT_DIR:/repo" \
+  -w /repo \
+  "$ARM_IMAGE_NAME" \
+  -lc "/usr/local/bin/run-smoke.sh"

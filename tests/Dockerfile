@@ -34,6 +34,7 @@ RUN apt-get update -y \
   && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg lsb-release apt-transport-https \
     sudo iproute2 iputils-ping bash nano procps dirmngr whiptail \
+    restic \
   && rm -rf /var/lib/apt/lists/*
 
 # Ajouter dépôt officiel Docker pour installer docker-compose-plugin
@@ -54,13 +55,15 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
 
 # Créer un utilisateur non-root 'tester'
 RUN useradd -m tester && echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester
-USER tester
-WORKDIR /home/tester
+# NOTE: le bootstrap / l'installateur exigent root (sudo). Les tests qui exécutent le bootstrap
+# doivent donc tourner en root.
+USER root
+WORKDIR /root
 
 # Copier les scripts utiles (entrypoint / smoke test)
-COPY --chown=tester:tester tests/entrypoint-bootstrap.sh /usr/local/bin/entrypoint-bootstrap.sh
-COPY --chown=tester:tester tests/run-smoke.sh /usr/local/bin/run-smoke.sh
-RUN sudo chmod +x /usr/local/bin/entrypoint-bootstrap.sh /usr/local/bin/run-smoke.sh
+COPY --chown=root:root tests/entrypoint-bootstrap.sh /usr/local/bin/entrypoint-bootstrap.sh
+COPY --chown=root:root tests/run-smoke.sh /usr/local/bin/run-smoke.sh
+RUN chmod +x /usr/local/bin/entrypoint-bootstrap.sh /usr/local/bin/run-smoke.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint-bootstrap.sh"]
 CMD ["--help"]
