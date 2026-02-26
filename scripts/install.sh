@@ -171,6 +171,11 @@ prompt_features() {
   # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
+
+  # Si nécessaire, injecte PROXY_TRUSTED_PROXIES dans le docker-compose (fonction idempotente).
+  if command -v compose_ensure_proxy_env >/dev/null 2>&1; then
+    compose_ensure_proxy_env || true
+  fi
 }
 
 setup_env() {
@@ -206,6 +211,11 @@ EOF
   # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
+
+  # Si nécessaire, injecte PROXY_TRUSTED_PROXIES dans le docker-compose (fonction idempotente).
+  if command -v compose_ensure_proxy_env >/dev/null 2>&1; then
+    compose_ensure_proxy_env || true
+  fi
 }
 
 show_summary_and_edit() {
@@ -408,6 +418,11 @@ EOF
               # shellcheck disable=SC1090
               . "$ENV_FILE" 2>/dev/null || true
               set +a
+
+              # Si nécessaire, injecte PROXY_TRUSTED_PROXIES dans le docker-compose (fonction idempotente).
+              if command -v compose_ensure_proxy_env >/dev/null 2>&1; then
+                compose_ensure_proxy_env || true
+              fi
 
               configure_homeassistant_yaml
               ;;

@@ -111,3 +111,66 @@ start_stack() {
     (cd "$STACK_DIR" && docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
   fi
 }
+
+# Insère dans le service 'homeassistant' une entrée environment pour
+# PROXY_TRUSTED_PROXIES si la variable est définie dans le .env et absente
+# du docker-compose actuel. L'insertion est idempotente.
+compose_ensure_proxy_env() {
+  compose_path_resolve
+  [[ -f "$COMPOSE_PATH" ]] || return 0
+  [[ -f "${ENV_FILE:-}" ]] || return 0
+
+  local val
+  val="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
+  [[ -n "${val:-}" ]] || return 0
+
+  # Ne rien faire si déjà présent dans le compose.
+  if grep -q 'PROXY_TRUSTED_PROXIES' "$COMPOSE_PATH"; then
+    return 0
+  fi
+
+  # repère la plage du service homeassistant
+  local home_start end_line
+  home_start="$(grep -n '^[[:space:]]*homeassistant:' "$COMPOSE_PATH" 2>/dev/null | cut -d: -f1 | head -n1 || true)"
+  [[ -n "$home_start" ]] || return 0
+  end_line="$(awk -v s="$home_start" 'NR>s && /^[^[:space:]].*:/{print NR; exit}' "$COMPOSE_PATH" 2>/dev/null || true)"
+  if [[ -z "$end_line" || "$end_line" -le 0 ]]; then
+    end_line=$(wc -l < "$COMPOSE_PATH" | tr -d ' ')
+  fi
+
+  # 1) Si 'environment:' existe dans le bloc, insère la ligne après.
+  local env_line indent insert_line tmp
+  env_line="$(awk -v s="$home_start" -v e="$end_line" 'NR>=s && NR<=e && /^[[:space:]]*environment:/{print NR; exit}' "$COMPOSE_PATH" || true)"
+  if [[ -n "$env_line" ]]; then
+    indent="$(sed -n "${env_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
+    insert_line="${indent}  - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+    tmp="$(mktemp)"
+    awk -v n=$((env_line+1)) -v nl="$insert_line" 'NR==n{print nl} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
+    return 0
+  fi
+
+  # 2) Sinon, si 'env_file:' existe, insère un bloc environment après.
+  local envfile_line
+  envfile_line="$(awk -v s="$home_start" -v e="$end_line" 'NR>=s && NR<=e && /^[[:space:]]*env_file:/{print NR; exit}' "$COMPOSE_PATH" || true)"
+  if [[ -n "$envfile_line" ]]; then
+    indent="$(sed -n "${envfile_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
+    local l1 l2
+    l1="${indent}environment:"
+    l2="${indent}  - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+    tmp="$(mktemp)"
+    awk -v n=$((envfile_line+1)) -v l1="$l1" -v l2="$l2" 'NR==n{print l1; print l2} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
+    return 0
+  fi
+
+  # 3) Sinon, insère un petit bloc après la ligne homeassistant:
+  local hs_line
+  hs_line="$home_start"
+  indent="$(sed -n "${hs_line}p" "$COMPOSE_PATH" | sed -E 's/^([[:space:]]*).*/\1/')"
+  local b1 b2
+  b1="${indent}  environment:"
+  b2="${indent}    - PROXY_TRUSTED_PROXIES=\\${PROXY_TRUSTED_PROXIES}"
+  tmp="$(mktemp)"
+  awk -v n=$((hs_line+1)) -v l1="$b1" -v l2="$b2" 'NR==n{print l1; print l2} {print}' "$COMPOSE_PATH" > "$tmp" && mv "$tmp" "$COMPOSE_PATH"
+  return 0
+}
+
