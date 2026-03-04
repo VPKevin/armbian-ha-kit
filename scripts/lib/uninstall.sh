@@ -2,6 +2,11 @@
 set -euo pipefail
 
 # Désinstallation de la stack.
+# Contracts (P0):
+# - uninstall_wizard: interactive flow, retourne RC_OK (0) sur succès, RC_ABORT/UI codes selon UI.
+# - uninstall_remove_packages: best-effort, retourne RC_OK même si rien à faire.
+
+SAMBA_CREDS="${SAMBA_CREDS:-/etc/samba/creds-ha-nas}"
 
 uninstall_remove_packages() {
   # Best-effort: retirer des dépendances installées par le projet.
@@ -21,13 +26,10 @@ uninstall_remove_packages() {
     done < <(apt_state_list)
   fi
 
-  # Aucun fallback: on n'essaie pas de deviner des paquets quand l'état est manquant.
-  # Seuls les paquets explicitement enregistrés par le kit (apt_state_list) sont pris en compte.
   if [[ ${#pkgs[@]} -eq 0 ]]; then
     return 0
   fi
 
-  # Sécurité: ne jamais retirer docker/caddy via ce mécanisme.
   local filtered=()
   local p
   for p in "${pkgs[@]}"; do
@@ -36,7 +38,6 @@ uninstall_remove_packages() {
         continue
         ;;
     esac
-    # Inclure uniquement si le paquet est réellement installé sur le système.
     if apt_is_installed "$p"; then
       filtered+=("$p")
     fi
@@ -53,9 +54,13 @@ uninstall_remove_packages() {
     apt-get remove -y "${filtered[@]}" 2>/dev/null || true
     apt-get autoremove -y 2>/dev/null || true
   fi
+  return 0
 }
 
 uninstall_wizard() {
+  # require root
+  require_root_or_fail || return "$RC_NOT_ROOT"
+
   if ! whi_yesno "Désinstallation" "Tout désinstaller ?\n\nCette action peut supprimer les conteneurs et, si tu le demandes, les données dans ${STACK_DIR}."; then
     return 0
   fi
@@ -191,4 +196,5 @@ uninstall_wizard() {
   fi
 
   whi_info "Désinstallation" "Désinstallation terminée."
+  return 0
 }

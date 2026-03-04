@@ -2,6 +2,9 @@
 set -euo pipefail
 
 # Helpers .env + parsing de variables docker-compose.
+# Contracts (P0):
+# - Functions either print a value (env_get) or return RC codes (RC_OK/RC_ERR) on success/failure.
+# - env_set_kv: idempotent, crée le fichier si nécessaire, garde chmod 600, retourne RC_OK ou RC_ERR.
 
 sanitize_env_value() {
   local v="$1"
@@ -16,6 +19,8 @@ whi_escape() {
   echo "$s"
 }
 
+# env_get: print the value of KEY from FILE. Return 0 if found, 1 otherwise.
+# stdout: value
 env_get() {
   local key="$1" file="$2"
   [[ -f "$file" ]] || return 1
@@ -37,6 +42,7 @@ strip_key_prefix_if_any() {
   fi
 }
 
+# env_set_kv: set key=value in file idempotently. Return RC_OK on success.
 env_set_kv() {
   local key="$1" value="$2" file="$3"
   value="$(strip_key_prefix_if_any "$key" "$value")"
@@ -45,8 +51,7 @@ env_set_kv() {
   touch "$file"
   chmod 600 "$file" || true
 
-  # Mise à jour idempotente et robuste: on remplace la première occurrence de KEY=...
-  # sans dépendre d'extensions sed (et sans risques si la clé/valeur contient des caractères spéciaux).
+  # Mise à jour idempotente et robuste
   if env_has_key "$key" "$file"; then
     local tmp
     tmp="$(mktemp)"
@@ -69,6 +74,7 @@ env_set_kv() {
   else
     printf "%s=%s\n" "$key" "$value" >> "$file"
   fi
+  return 0
 }
 
 compose_extract_vars() {
@@ -106,6 +112,9 @@ compose_extract_vars() {
   ' "$compose_file"
 }
 
+# env_ensure_from_compose: ensure env file contains vars used by compose file.
+# - Prompts via whi_input for missing vars when interactive.
+# - Returns RC_OK on success, non-zero if user aborts or whiptail returns error code.
 env_ensure_from_compose() {
   local compose_file="$1"
 
@@ -116,13 +125,10 @@ env_ensure_from_compose() {
   vars="$(compose_extract_vars "$compose_file" || true)"
   [[ -z "$vars" ]] && return 0
 
-  # shellcheck disable=SC1090
   set -a
-  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 
-  # Flag for callers: did we prompt for any missing vars?
   ENV_PROMPTED=0
 
   while IFS=$'\t' read -r name def; do
@@ -141,9 +147,11 @@ env_ensure_from_compose() {
     ENV_PROMPTED=1
   done <<< "$vars"
 
-  # shellcheck disable=SC1090
   set -a
-  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
+  return 0
 }
+
+# End of env helpers
+

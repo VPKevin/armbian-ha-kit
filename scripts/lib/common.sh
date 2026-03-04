@@ -131,3 +131,58 @@ apt_install() {
     fi
   done
 }
+
+# Logging centralise pour unifier les messages et faciliter le diagnostic.
+log_msg() {
+  local level="$1"; shift || true
+  printf '[%s] %s\n' "$level" "$*" >&2
+}
+
+log_info() { log_msg "INFO" "$@"; }
+log_warn() { log_msg "WARN" "$@"; }
+log_error() { log_msg "ERROR" "$@"; }
+
+# Charge un .env de facon best-effort sans faire echouer le script appelant.
+load_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  set -a
+  # shellcheck disable=SC1090
+  . "$file" 2>/dev/null || true
+  set +a
+}
+
+# Trap d'erreur standardisable pour les scripts principaux.
+install_error_trap() {
+  local src="${1:-unknown}"
+  trap 'rc=$?; log_error "Echec (${src}) a la ligne ${LINENO} (rc=${rc})"; exit "$rc"' ERR
+}
+
+# Standard return codes (small set pour les scripts)
+RC_OK=0            # réussite
+RC_ERR=1           # erreur générique
+RC_MISUSE=2        # mauvaise utilisation / arguments invalides
+RC_NOT_ROOT=3      # nécessite root
+RC_MISSING_DEP=4   # dépendances manquantes
+RC_PRECHECK=5      # pré-checks échoués
+
+# Retour standardisé et logging
+# usage: rc_fail "message" [code]
+rc_fail() {
+  local msg="$1"; shift || true
+  local code="${1:-$RC_ERR}"
+  log_error "$msg"
+  return "$code"
+}
+
+# rc_ok: retourne RC_OK
+rc_ok() { return "$RC_OK"; }
+
+# Vérifie que l'on est root et retourne RC_NOT_ROOT si ce n'est pas le cas (pour fonctions)
+require_root_or_fail() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    log_error "Opération requiert les privilèges root"
+    return "$RC_NOT_ROOT"
+  fi
+  return "$RC_OK"
+}

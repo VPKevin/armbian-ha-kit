@@ -3,13 +3,17 @@ set -euo pipefail
 
 echo "== Smoke tests: container environement =="
 
-# Vérifier présence du binaire docker
+# Si docker CLI est absent, ce n'est pas une erreur tant que le socket n'est pas monté.
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker CLI absent"
-  exit 2
+  if [ -S /var/run/docker.sock ]; then
+    echo "ERROR: docker CLI absent but docker socket is mounted" >&2
+    exit 2
+  else
+    echo "docker CLI absent (ok si socket non monté)"
+  fi
+else
+  echo "docker CLI:" $(docker --version || true)
 fi
-
-echo "docker CLI:" $(docker --version || true)
 
 # Si le socket docker est monté, essayer docker ps
 if [ -S /var/run/docker.sock ]; then

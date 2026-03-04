@@ -7,13 +7,24 @@ set -euo pipefail
 
 BOOTSTRAP_SOURCE="${BOOTSTRAP_SOURCE:-remote}"   # 'remote' ou 'local'
 HA_REF="${HA_REF:-main}"
-REPO_OWNER="VPKevin"
+REPO_OWNER="vpk-fr"
 REPO_NAME="armbian-ha-kit"
 
 run_remote() {
   local url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${HA_REF}/bootstrap.sh"
   echo "[entrypoint] Running remote bootstrap: ${url}"
-  exec bash -c "curl -fsSL '${url}' | bash -s --"
+
+  if curl -fsSL "$url" -o /tmp/bootstrap.sh; then
+    exec bash /tmp/bootstrap.sh
+  fi
+
+  echo "[entrypoint] Remote bootstrap indisponible, fallback vers local (/repo/bootstrap.sh)." >&2
+  if [[ -f /repo/bootstrap.sh ]]; then
+    exec bash /repo/bootstrap.sh --local
+  fi
+
+  echo "[entrypoint] Echec: ni bootstrap remote ni local disponible." >&2
+  exit 1
 }
 
 if [[ "${BOOTSTRAP_SOURCE}" == "local" ]]; then

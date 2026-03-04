@@ -6,7 +6,7 @@ ENV_FILE="${STACK_DIR}/.env"
 RESTIC_DIR="${STACK_DIR}/restic"
 RESTIC_REPOS="${RESTIC_DIR}/repos.conf"
 RESTIC_PASS="${RESTIC_DIR}/password"
-SAMBA_CREDS="/etc/samba/creds-ha"
+SAMBA_CREDS="/etc/samba/creds-ha-nas"
 
 DEFAULT_COMPOSE_PATH="${STACK_DIR}/docker-compose.yml"
 COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"
@@ -39,17 +39,44 @@ source "${SCRIPT_DIR}/lib/uninstall.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/status.sh"
 
+# ---------------------------------------------------------------------------
+# Contracts / minimal documentation for key functions (P0)
+# - Inputs: via globals (STACK_DIR, ENV_FILE, COMPOSE_PATH, etc.) or args where noted
+# - Outputs: files created, env variables set, side-effects (docker compose, systemd)
+# - Error modes: non-zero return codes defined in scripts/lib/common.sh (RC_*)
+# - Success: return RC_OK (0)
+# ---------------------------------------------------------------------------
+
+# Ensure the script runs as root and that a TTY is available for interactive UI.
+# Returns: exits with RC_NOT_ROOT if not run as root (kept behavior), otherwise RC_OK.
 need_root() {
-  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "Run as root: sudo bash $0"
-    exit 1
-  fi
+  require_root_or_fail || { echo "Run as root: sudo bash $0"; exit "$RC_NOT_ROOT"; }
 
   # whiptail a besoin d'un TTY. Quand on lance via "curl | sudo bash",
   # stdin n'est pas un terminal => les touches (flèches) s'affichent comme ^[[C.
   if [[ ! -t 0 ]]; then
     exec </dev/tty
   fi
+}
+
+# Preflight checks: verifies presence of minimal system commands used by the installer.
+# Returns: RC_OK on success, RC_MISSING_DEP when required commands are missing.
+preflight_checks() {
+  local missing=()
+  local b
+  for b in bash awk sed grep mkdir chmod; do
+    command -v "$b" >/dev/null 2>&1 || missing+=("$b")
+  done
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    rc_fail "Dependances systeme manquantes: ${missing[*]}" "$RC_MISSING_DEP"
+    return "$RC_MISSING_DEP"
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log_warn "docker non detecte pour l'instant: il sera installe/configure plus loin si necessaire."
+  fi
+  return "$RC_OK"
 }
 
 write_file_if_missing() {
@@ -173,6 +200,8 @@ prompt_features() {
   set +a
 }
 
+# setup_env: crée et recharge un .env minimal si absent.
+# Returns: RC_OK on success, non-zero codes from env_ensure_from_compose propagated.
 setup_env() {
   mkdir -p "$STACK_DIR"
 
@@ -201,11 +230,8 @@ EOF
   env_ensure_from_compose "$COMPOSE_PATH" || return $?
 
   # Charge les variables dans l’environnement du script
-  # shellcheck disable=SC1090
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE" 2>/dev/null || true
-  set +a
+  load_env_file "$ENV_FILE"
+  return "$RC_OK"
 }
 
 show_summary_and_edit() {
@@ -576,7 +602,9 @@ step_summary() {
 }
 
 main() {
+  install_error_trap "install.sh"
   need_root
+  preflight_checks
   ensure_dirs
 
   # deps minimales pour l’install
