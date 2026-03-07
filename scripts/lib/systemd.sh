@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Systemd helpers pour installer le timer/service de backup.
+
+# Contracts (P0):
+# - Fonction: setup_systemd_backup
+# - Entrées: STACK_DIR, chemins des unit files dans ${STACK_DIR}/systemd
+# - Sorties: installation de /etc/systemd/system/ha-backup.{service,timer} et /usr/local/sbin/ha-backup.sh
+# - Codes retour: 0 succès, non-zero si systemd absent ou fichiers manquants.
+
 setup_systemd_backup() {
   if [[ ! -d /run/systemd/system ]] || ! command -v systemctl >/dev/null 2>&1; then
     if command -v whi_info >/dev/null 2>&1; then

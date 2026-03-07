@@ -3,6 +3,15 @@ set -euo pipefail
 
 # Gestion du docker-compose.yml (local/URL) + démarrage de la stack.
 
+# Contracts (P0):
+# - Fonctions: choose_compose_source, compose_write_path, compose_path_resolve,
+#   compose_container_id, setup_compose_prereqs, start_stack
+# - Entrées: variables globales potentiellement utilisées: STACK_DIR, DEFAULT_COMPOSE_PATH,
+#   COMPOSE_PATH, ENV_FILE, ENABLE_CADDY
+# - Sorties: modifications de COMPOSE_PATH, écriture de ${STACK_DIR}/.compose_path,
+#   lancement des commandes docker compose.
+# - Codes retour: 0 succès, codes non-zero en cas d'erreur (usage UI_BACK/UI_ABORT pour UI).
+
 choose_compose_source() {
   local action
   if action="$(whi_menu "Docker Compose" "Quel docker-compose veux-tu utiliser ?" 18 84 10 \

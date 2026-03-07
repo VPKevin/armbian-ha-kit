@@ -3,6 +3,12 @@ set -euo pipefail
 
 # Caddy domain/email prompt + persistence.
 
+# Contracts (P0):
+# - Fonctions: prompt_caddy_domain
+# - Entrées: ENABLE_CADDY, ENV_FILE, STACK_DIR
+# - Sorties: écrit HA_DOMAIN et LE_EMAIL dans $ENV_FILE via env_set_kv
+# - Codes retour: 0 succès, UI_BACK/UI_ABORT ou code non-zero en cas d'erreur.
+
 prompt_caddy_domain() {
   CADDY_PROMPTED=0
   # Demande uniquement si Caddy est activé.

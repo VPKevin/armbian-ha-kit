@@ -3,6 +3,12 @@ set -euo pipefail
 
 # NAS SMB + USB setup (montage + ajout repo restic).
 
+# Contracts (P0):
+# - Fonctions: setup_nas_smb, choose_usb_partition, setup_usb_backup, fstab_remove_matching
+# - Entrées: variables globales: SAMBA_CREDS, STACK_DIR, RESTIC_DIR, RESTIC_REPOS
+# - Sorties: modifications de /etc/fstab, création de SAMBA_CREDS, ajout de repos dans RESTIC_REPOS
+# - Codes retour: 0 succès, non-zero en cas d'erreur.
+
 fstab_remove_matching() {
   # Supprime de /etc/fstab les lignes qui matchent un pattern regex (ERE) de façon robuste.
   # On évite `sed -i` sur des patterns non échappés (cause typique de "unterminated address regex").

@@ -3,6 +3,12 @@ set -euo pipefail
 
 # Home Assistant helpers.
 
+# Contracts (P0):
+# - Fonctions: detect_docker_subnet, configure_homeassistant_yaml
+# - Entrées: variables globales: STACK_DIR, ENV_FILE, POSTGRES_* variables
+# - Sorties: écrit/initialise ${STACK_DIR}/config/configuration.yaml si absent
+# - Codes retour: 0 succès, non-zero si erreur d'écriture.
+
 detect_docker_subnet() {
   local subnet
   subnet="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null || true)"
@@ -60,4 +66,3 @@ $(printf '%b' "$trusted_lines")
 EOF
   fi
 }
-

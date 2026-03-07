@@ -3,6 +3,13 @@ set -euo pipefail
 
 # Affiche un status lisible de la stack et de ses composants.
 
+# Contracts (P0):
+# - Fonctions: fmt_bool, fmt_bool_default_no, get_last_backup_local, get_last_restic_snapshot,
+#   docker_ports_for_container, compose_ps_compact, status_wizard
+# - Entrées: STACK_DIR, ENV_FILE, DEFAULT_COMPOSE_PATH, RESTIC_DIR, RESTIC_REPOS, RESTIC_PASS
+# - Sorties: affichage console; peut appeler setup_restic_password/setup_systemd_backup
+# - Codes retour: 0 succès, non-zero pour erreurs ponctuelles.
+
 fmt_bool() {
   local v="${1:-}"
   case "$v" in

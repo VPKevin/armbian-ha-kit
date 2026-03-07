@@ -3,6 +3,11 @@ set -euo pipefail
 
 # i18n minimal FR/EN basé sur la locale.
 
+# Contracts (P0):
+# - Fournit la fonction t(key) pour retourner la traduction minimale basée sur UI_LANG.
+# - Entrées: UI_LANG, variables TXT_* définies dans ce fichier
+# - Sorties: chaine traduite au stdout
+
 detect_lang() {
   local l="${LC_ALL:-${LANG:-}}"
   l="${l,,}"

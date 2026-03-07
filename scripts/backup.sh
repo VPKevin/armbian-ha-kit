@@ -7,6 +7,16 @@ BACKUP_DIR="${STACK_DIR}/backup"
 LOG_TAG="[ha-backup]"
 COMPOSE_PATH="${COMPOSE_PATH:-}"
 
+# Load common helpers if available to standardize logging/error handling.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${SCRIPT_DIR}/lib/common.sh" || true
+  install_error_trap "backup.sh"
+  # require root for backup operations (best-effort)
+  require_root_or_fail || exit $RC_NOT_ROOT
+fi
+
 if [[ -z "${COMPOSE_PATH:-}" && -f "${STACK_DIR}/.compose_path" ]]; then
   COMPOSE_PATH="$(cat "${STACK_DIR}/.compose_path" 2>/dev/null || true)"
 fi
@@ -49,7 +59,7 @@ if command -v ui_run >/dev/null 2>&1; then
   # Exécuter la commande via bash -lc pour que la redirection soit faite dans
   # le sous-shell invoqué par ui_run (sinon la redirection serait appliquée
   # par le shell appelant et le dump n'irait pas dans $DUMP_FILE).
-  ui_run "pg_dump" -- bash -lc "docker exec -e PGPASSWORD=\'${POSTGRES_PASSWORD}\' $(pg_container_id) pg_dump -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\" --no-owner --no-privileges > \"${DUMP_FILE}\"" || true
+  ui_run "pg_dump" -- bash -lc "docker exec -e PGPASSWORD='${POSTGRES_PASSWORD}' $(pg_container_id) pg_dump -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\" --no-owner --no-privileges > \"${DUMP_FILE}\"" || true
   gzip -f "$DUMP_FILE"
 else
   echo "$LOG_TAG Dumping PostgreSQL database to $DUMP_FILE.gz ..."

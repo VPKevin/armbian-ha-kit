@@ -3,6 +3,24 @@ set -euo pipefail
 
 # Helpers communs (apt, binaire, TTY).
 
+# Contracts (P0):
+# - Ce module expose helpers de logging/erreur et quelques constantes par défaut
+#   partagées (STACK_DIR, ENV_FILE, RESTIC_DIR, RESTIC_REPOS, RESTIC_PASS,
+#   DEFAULT_COMPOSE_PATH, SAMBA_CREDS, AHK_STATE_DIR).
+# - Les variables sont définies seulement si elles ne le sont pas déjà afin de
+#   permettre aux scripts appelants (ex: install.sh) de surcharger les valeurs.
+
+# Valeurs par défaut centrales (idempotentes — n'écrasent pas les variables
+# déjà exportées par l'appelant)
+: "${STACK_DIR:=/srv/ha-stack}"
+: "${AHK_STATE_DIR:=/var/lib/armbian-ha-kit}"
+: "${ENV_FILE:=${STACK_DIR}/.env}"
+: "${RESTIC_DIR:=${STACK_DIR}/restic}"
+: "${RESTIC_REPOS:=${RESTIC_DIR}/repos.conf}"
+: "${RESTIC_PASS:=${RESTIC_DIR}/password}"
+: "${DEFAULT_COMPOSE_PATH:=${STACK_DIR}/docker-compose.yml}"
+: "${SAMBA_CREDS:=/etc/samba/creds-ha-nas}"
+
 req_bin() { command -v "$1" >/dev/null 2>&1; }
 
 is_interactive_tty() {

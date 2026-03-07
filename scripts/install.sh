@@ -6,7 +6,6 @@ ENV_FILE="${STACK_DIR}/.env"
 RESTIC_DIR="${STACK_DIR}/restic"
 RESTIC_REPOS="${RESTIC_DIR}/repos.conf"
 RESTIC_PASS="${RESTIC_DIR}/password"
-SAMBA_CREDS="/etc/samba/creds-ha-nas"
 
 DEFAULT_COMPOSE_PATH="${STACK_DIR}/docker-compose.yml"
 COMPOSE_PATH="${DEFAULT_COMPOSE_PATH}"

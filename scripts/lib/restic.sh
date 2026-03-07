@@ -3,6 +3,14 @@ set -euo pipefail
 
 # Restic: password, repos, init, restauration.
 
+# Contracts (P0):
+# - Fonctions exposées: ensure_restic, add_repo, init_restic_repo, setup_restic_password,
+#   restic_choose_repo, restic_choose_snapshot, restore_wizard, restore_step_*
+# - Entrées: variables globales: RESTIC_DIR, RESTIC_REPOS, RESTIC_PASS, ENV_FILE
+# - Sorties: fichiers créés (RESTIC_PASS, RESTIC_REPOS), exportation de RESTIC_* vars,
+#   et appels aux commandes restic.
+# - Codes retour: 0 succès, non-zero en cas d'erreur; UI_* pour les flows interactifs.
+
 ensure_restic() {
   # Restic est requis pour init/snapshots/restore. On l'installe si absent.
   if req_bin restic; then

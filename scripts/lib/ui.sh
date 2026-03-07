@@ -3,6 +3,13 @@ set -euo pipefail
 
 # Helpers whiptail. Dépend de scripts/lib/i18n.sh (t()).
 
+# Contracts (P0):
+# - Fournit une API pour interactions CLI/UI via whiptail: whi_input, whi_pass, whi_yesno,
+#   whi_info, whi_confirm, whi_menu, whi_yesno_back, ui_run, ui_notify, ui_progress.
+# - Codes retour UI: UI_OK(0), UI_BACK, UI_ABORT.
+# - Entrées: variables globales comme STACK_DIR, UI_LOG_DIR, UI_VERBOSE.
+# - Sorties: messages affichés et fichiers logs sous UI_LOG_DIR.
+
 # Assure un encodage UTF-8 pour whiptail (sinon accents cassés).
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 export LANG="${LANG:-C.UTF-8}"

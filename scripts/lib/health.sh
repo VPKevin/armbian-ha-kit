@@ -3,6 +3,12 @@ set -euo pipefail
 
 # Vérification de santé des conteneurs (healthcheck Docker) et affichage des logs.
 
+# Contracts (P0):
+# - Fonction: wait_for_health(timeout_s)
+# - Entrées: ENABLE_CADDY, ENV_FILE, STACK_DIR
+# - Sorties: 0 si les containers sont prêts/healthy, 1 en cas d'échec (logs affichés)
+# - Comportement: attend jusqu'au timeout et affiche les logs en cas d'échec.
+
 wait_for_health() {
   # Attend que les conteneurs de la stack soient healthy (ou au moins running si pas de healthcheck).
   # Affiche les derniers logs en cas d'échec.
