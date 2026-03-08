@@ -19,7 +19,7 @@ Contraintes & objectifs principaux :
     - **NAS SMB** et/ou
     - **support USB**
 - Sauvegardes **chiffrées**, versionnées, et avec rétention.
-- Assisté par un **wizard whiptail** (questions interactives).
+- Assisté par un **wizard TUI (dialog)** (questions interactives).
 - Optionnel : tentative d'automatisation des redirections via **UPnP** (miniupnpc), avec test de compatibilité avant.
 
 ---
@@ -54,7 +54,7 @@ Restauration (recommandée) :
 
 ## Invariants (besoin à respecter)
 
-- Tout doit être installable par **un wizard whiptail**
+- Tout doit être installable par **un wizard TUI (dialog)**
 - Installation persistante sous `/srv/ha-stack`
 - Backups sans arrêt (DB externe obligatoire)
 - Sauvegardes restic chiffrées + rétention :

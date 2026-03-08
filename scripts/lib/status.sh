@@ -152,7 +152,7 @@ status_wizard() {
 
   while true; do
     local action
-    if action="$(whi_menu "Status" "Que veux-tu faire ?" 18 88 10 \
+    if action="$(ui_menu "Status" "Que veux-tu faire ?" 18 88 10 \
       "view" "Afficher le status" \
       "backup" "Configurer / modifier les sauvegardes (NAS/USB, Restic, timer)" \
       "caddy" "Configurer Caddy (domaine/email)" \
@@ -216,12 +216,12 @@ status_wizard() {
         fi
 
         local ans
-        ans="$(whi_yesno_back "Backup" "Configurer / reconfigurer un NAS SMB (repository Restic) ?" "no")" || return $?
+        ans="$(ui_yesno_back "Backup" "Configurer / reconfigurer un NAS SMB (repository Restic) ?" "no")" || return $?
         if [[ "$ans" == "yes" ]]; then
-          setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+          setup_nas_smb || ui_info "NAS" "Configuration NAS annulée."
         fi
 
-        ans="$(whi_yesno_back "Backup" "Configurer / reconfigurer un disque USB (repository Restic) ?" "no")" || return $?
+        ans="$(ui_yesno_back "Backup" "Configurer / reconfigurer un disque USB (repository Restic) ?" "no")" || return $?
         if [[ "$ans" == "yes" ]]; then
           setup_usb_backup || true
         fi

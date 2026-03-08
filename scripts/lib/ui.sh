@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Helpers whiptail. Dépend de scripts/lib/i18n.sh (t()).
+# Helpers dialog. Dépend de scripts/lib/i18n.sh (t()).
 
 # Contracts (P0):
-# - Fournit une API pour interactions CLI/UI via whiptail: whi_input, whi_pass, whi_yesno,
-#   whi_info, whi_confirm, whi_menu, whi_yesno_back, ui_run, ui_notify, ui_progress.
+# - Fournit une API pour interactions CLI/UI via dialog: ui_input, ui_pass, ui_yesno,
+#   ui_info, ui_confirm, ui_menu, ui_yesno_back, ui_run, ui_notify, ui_progress.
 # - Codes retour UI: UI_OK(0), UI_BACK, UI_ABORT.
 # - Entrées: variables globales comme STACK_DIR, UI_LOG_DIR, UI_VERBOSE.
 # - Sorties: messages affichés et fichiers logs sous UI_LOG_DIR.
 
-# Assure un encodage UTF-8 pour whiptail (sinon accents cassés).
+# Assure un encodage UTF-8 pour dialog (sinon accents cassés).
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 export LANG="${LANG:-C.UTF-8}"
 
@@ -23,7 +23,7 @@ UI_BACK=10
 UI_ABORT=20
 
 _ui_map_rc() {
-  # whiptail: 0=OK, 1=Cancel, 255=Esc
+  # dialog: 0=OK, 1=Cancel, 255=Esc
   local rc="${1:-0}"
   case "$rc" in
     0)   return "$UI_OK" ;;
@@ -33,122 +33,134 @@ _ui_map_rc() {
   esac
 }
 
-# Exécute whiptail sans que `set -e` ne termine le script sur Cancel/Esc.
+# Exécute dialog sans que `set -e` ne termine le script sur Cancel/Esc.
 # stdout: la valeur choisie/saisie (si applicable)
-# return: code whiptail brut (0/1/255)
-_ui_whiptail_capture() {
+# return: code dialog brut (0/1/255)
+_ui_dialog_capture() {
   local out rc
   set +e
-  out="$(whiptail "$@" 3>&1 1>&2 2>&3)"
+  out="$(dialog --clear "$@" 3>&1 1>&2 2>&3)"
   rc=$?
   set -e
+
+  # Restore terminal state on the real TTY so the last dialog frame is removed
+  # and the cursor/state are sane. We explicitly write to /dev/tty to avoid
+  # polluting stdout (which may be captured by callers).
+  if [[ -c /dev/tty ]]; then
+    if command -v tput >/dev/null 2>&1; then
+      tput rmcup >/dev/tty 2>/dev/null || true
+    fi
+    printf '%b' '\e[?1049l' >/dev/tty 2>/dev/null || true
+
+    # Clear the visible screen and move cursor to home
+    printf '%b' '\e[H\e[2J' >/dev/tty 2>/dev/null || true
+
+    # Some environments may not have tput; guard it
+    command -v tput >/dev/null 2>&1 && tput cnorm >/dev/tty 2>/dev/null || true
+    # restore terminal modes
+    stty sane </dev/tty >/dev/tty 2>/dev/null || true
+  fi
+
+  # Emit captured output after terminal restoration to avoid mixing with dialog frame
   printf '%s' "$out"
+
   return "$rc"
 }
 
-whi_input() {
+# Map RC pour dialog (même mapping que pour whiptail)
+_ui_map_rc_dialog() {
+  local rc="${1:-0}"
+  case "$rc" in
+    0)   return "$UI_OK" ;;
+    1)   return "$UI_BACK" ;;
+    255) return "$UI_ABORT" ;;
+    *)   return "$UI_ABORT" ;;
+  esac
+}
+
+# --- New: Generic UI helpers using dialog ---
+# ui_input: inputbox (stdout: la valeur saisie)
+ui_input() {
   local title="$1" prompt="$2" default="${3:-}"
-
   local out
-  out="$(_ui_whiptail_capture --title "$title" --inputbox "$prompt" 10 70 "$default" \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)")"
+  out="$(_ui_dialog_capture --title "$title" --inputbox "$prompt" 10 70 "$default" \
+    --ok-label "$(t VALIDATE)" --cancel-label "$(t BACK)")"
   local rc=$?
-
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
   printf '%s' "$out"
 }
 
-whi_pass() {
+# ui_pass: passwordbox
+ui_pass() {
   local title="$1" prompt="$2"
-
   local out
-  out="$(_ui_whiptail_capture --title "$title" --passwordbox "$prompt" 10 70 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)")"
+  out="$(_ui_dialog_capture --title "$title" --passwordbox "$prompt" 10 70 \
+    --ok-label "$(t VALIDATE)" --cancel-label "$(t BACK)")"
   local rc=$?
-
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
   printf '%s' "$out"
 }
 
-whi_yesno() {
+# ui_yesno: simple yes/no (returns UI_OK/UI_BACK/UI_ABORT)
+ui_yesno() {
   local title="$1" prompt="$2"
-
-  set +e
-  whiptail --title "$title" --yesno "$prompt" 10 70 \
-    --yes-button "$(t YES)" --no-button "$(t NO)"
+  _ui_dialog_capture --title "$title" --yesno "$prompt" 10 70 \
+    --yes-label "$(t YES)" --no-label "$(t NO)" >/dev/null
   local rc=$?
-  set -e
-
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
 }
 
-whi_info() {
+# ui_info: msgbox with non-interactive fallback
+ui_info() {
   local title="$1" msg="$2"
-
-  # En environnement non-interactif (CI, container sans /dev/tty), whiptail peut bloquer
-  # ou échouer. On fallback sur une sortie console.
   if ! is_interactive_tty; then
     printf '\n[%s]\n%s\n\n' "$title" "$msg" >&2
     return "$UI_OK"
   fi
-
-  # Exécute via le wrapper pour éviter que `set -e` casse le flot sur Cancel/Esc.
-  _ui_whiptail_capture --title "$title" --msgbox "$msg" 12 80 --ok-button "$(t OK)" >/dev/null
+  _ui_dialog_capture --title "$title" --msgbox "$msg" 12 80 --ok-label "$(t OK)" >/dev/null
   local rc=$?
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
 }
 
-whi_confirm() {
-  local title="$1" prompt="$2"
+# ui_confirm: yes/no confirmation (same as ui_yesno)
+ui_confirm() { ui_yesno "$@"; }
 
-  set +e
-  whiptail --title "$title" --yesno "$prompt" 10 70 \
-    --yes-button "$(t YES)" --no-button "$(t NO)"
-  local rc=$?
-  set -e
-
-  _ui_map_rc "$rc" || return $?
-}
-
-# Yes/No menu with Back via Cancel button; optional default item (yes|no).
-# stdout: "yes" or "no"
-# return: UI_OK/UI_BACK/UI_ABORT
-whi_yesno_back() {
-  local title="$1" prompt="$2" default="${3:-}"
-
+# ui_yesno_back: menu-based yes/no with Back via Cancel; stdout: yes|no
+ui_yesno_back() {
+  local title="$1" prompt="$2" default_item="${3:-}"
   local args=()
-  if [[ -n "${default:-}" ]]; then
-    args+=(--default-item "$default")
+  if [[ -n "$default_item" ]]; then
+    args+=(--default-item "$default_item")
   fi
-
   local out
-  out="$(_ui_whiptail_capture --title "$title" --menu "$prompt" 12 70 2 \
-    "${args[@]}" \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    yes "$(t YES)" \
-    no "$(t NO)")"
+  out="$(_ui_dialog_capture --title "$title" --menu "$prompt" 12 70 2 "${args[@]}" \
+    yes "$(t YES)" no "$(t NO)" --ok-label "$(t VALIDATE)" --cancel-label "$(t BACK)")"
   local rc=$?
-
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
   printf '%s' "$out"
 }
 
-# Menu générique. Usage: whi_menu "Titre" "Prompt" H W LIST_HEIGHT key1 label1 key2 label2 ...
+# Menu générique: implémentation basée sur dialog (API compatible)
+# Usage: ui_menu "Titre" "Prompt" H W LIST_HEIGHT key1 label1 key2 label2 ...
 # - stdout: la clé choisie
 # - return: UI_OK/UI_BACK/UI_ABORT
-whi_menu() {
+_ui_menu() {
   local title="$1" prompt="$2" height="$3" width="$4" list_height="$5"
   shift 5
 
   local out
-  out="$(_ui_whiptail_capture --title "$title" --menu "$prompt" "$height" "$width" "$list_height" \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    "$@")"
+  out="$(_ui_dialog_capture --title "$title" --menu "$prompt" "$height" "$width" "$list_height" "$@")"
   local rc=$?
 
-  _ui_map_rc "$rc" || return $?
+  _ui_map_rc_dialog "$rc" || return $?
   printf '%s' "$out"
 }
+
+# Public wrapper demandé: ui_menu
+ui_menu() { _ui_menu "$@"; }
+
+# Alias historique demandé: di_menu -> ui_menu
+di_menu() { ui_menu "$@"; }
 
 # ----------------------
 # UI helpers: run/notify/progress
@@ -299,3 +311,18 @@ ui_progress() {
       ;;
   esac
 }
+
+
+# Ensure terminal is restored on script exit as a safety net (clears lingering dialog frame)
+_ui_restore_terminal() {
+  if [[ -c /dev/tty ]]; then
+    if command -v tput >/dev/null 2>&1; then
+      tput rmcup >/dev/tty 2>/dev/null || true
+    fi
+    printf '%b' '\e[?1049l' >/dev/tty 2>/dev/null || true
+    printf '%b' '\e[H\e[2J' >/dev/tty 2>/dev/null || true
+    command -v tput >/dev/null 2>&1 && tput cnorm >/dev/tty 2>/dev/null || true
+    stty sane </dev/tty >/dev/tty 2>/dev/null || true
+  fi
+}
+trap _ui_restore_terminal EXIT

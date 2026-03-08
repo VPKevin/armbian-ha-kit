@@ -102,16 +102,55 @@ The wizard:
 
 ---
 
-## Prerequisites
+## Prérequis
 
 On the Armbian box:
 - Docker and Docker Compose installed.
-- `whiptail` installed (present by default on Armbian/Debian).
+- `dialog` installed (present on Debian/Armbian or installable via apt).
 - Root access (`sudo`).
 
 Network:
 - A public domain name pointing to your public IP (DNS A/AAAA record).
 - Inbound port **443** open (and sometimes **80** for ACME challenge).
+
+## UI (centralisé)
+
+L'interface textuelle utilisée par le wizard est centralisée dans `scripts/lib/ui.sh`.
+Toutes les parties métier du code appellent les wrappers suivants :
+
+- `ui_input` – champ texte (inputbox)
+- `ui_pass` – mot de passe (passwordbox)
+- `ui_yesno` – simple Yes/No (yesno)
+- `ui_menu` – menu de sélection (menu)
+- `ui_yesno_back` – menu Oui/Non avec option "Retour"
+- `ui_info` – message d'information (msgbox)
+- `ui_confirm` – confirmation Yes/No
+
+Ces wrappers s'appuient sur une unique fonction interne `_ui_dialog_capture` qui invoque `dialog` et normalise les codes de retour en `UI_OK` / `UI_BACK` / `UI_ABORT`.
+
+Pourquoi c'est utile
+- Si tu veux changer l'outil d'affichage plus tard (par ex. une autre implémentation), tu n'auras normalement à modifier qu'un seul fichier : `scripts/lib/ui.sh` (ou ajouter un adaptateur appelé par `ui.sh`). Le reste du code reste inchangé car il appelle les `ui_*`.
+
+Comment remplacer le backend (exemple simple)
+1. Ouvrir `scripts/lib/ui.sh`.
+2. Remplacer l'appel à `whiptail` situé dans `_ui_whiptail_capture` par une invocation de l'outil de ton choix (`dialog`), ou brancher une délégation conditionnelle selon une variable d'environnement `UI_BACKEND`.
+
+Exemple (conceptuel) dans `ui.sh` :
+- soit modifier `_ui_whiptail_capture` pour appeler `dialog` au lieu de `whiptail` ;
+- soit détecter `UI_BACKEND=dialog` et appeler `ui_dialog_capture "$@"`.
+
+Tests rapides après modification
+- Pour valider qu'un changement de backend n'introduit pas de régression, lance les tests smoke non-interactifs :
+
+```bash
+cd /Users/kevin/www/armbian-ha-kit
+chmod +x tests/run-tests.sh
+./tests/run-tests.sh
+```
+
+Notes
+- Les wrappers conservent le comportement actuel vis‑à‑vis des environnements non‑interactifs (ex: `whi_info` fait un fallback vers la console si pas de TTY).
+- Si tu veux, je peux implémenter maintenant un petit système `UI_BACKEND` (support minimal `whiptail` + `dialog`) et ajouter un test Bats basique pour `_ui_map_rc` et le fallback non‑TTY.
 
 ---
 
@@ -169,7 +208,7 @@ The wizard restores `config/` + `backup/`, restarts Postgres, re-imports the lat
 
 ## Troubleshooting
 
-### Whiptail affiche `^[[C` / impossible de naviguer (flèches)
+### Dialog / UI affiche `^[[C` / impossible de naviguer (flèches)
 
 C’est un symptôme que le script est lancé **sans TTY** (souvent via `curl | sudo bash`, cron, ou un terminal qui ne fournit pas `/dev/tty`).
 

@@ -12,14 +12,14 @@ setup() {
   mkdir -p "$RESTIC_DIR"
   printf 'dummy' >"$RESTIC_PASS"
 
-  # stub whiptail + log, pour éviter toute interaction.
-  WHIPTAIL_LOG="$TMPDIR/whiptail.log"
-  export WHIPTAIL_LOG
+  # stub dialog + log, pour éviter toute interaction.
+  DIALOG_LOG="$TMPDIR/dialog.log"
+  export DIALOG_LOG
   mkdir -p "$TMPDIR/bin"
-  cat >"$TMPDIR/bin/whiptail" <<'EOF'
+  cat >"$TMPDIR/bin/dialog" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "whiptail $*" >>"${WHIPTAIL_LOG}"
+printf '%s\n' "dialog $*" >>"${DIALOG_LOG}"
 # msgbox => OK
 if [[ "$*" == *"--msgbox"* ]]; then
   exit 0
@@ -30,7 +30,7 @@ if [[ "$*" == *"--menu"* ]]; then
 fi
 exit 0
 EOF
-  chmod +x "$TMPDIR/bin/whiptail"
+  chmod +x "$TMPDIR/bin/dialog"
   export PATH="$TMPDIR/bin:$PATH"
 }
 

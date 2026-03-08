@@ -33,7 +33,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg lsb-release apt-transport-https \
-    sudo iproute2 iputils-ping bash nano procps dirmngr whiptail \
+    sudo iproute2 iputils-ping bash nano procps dirmngr dialog \
   && rm -rf /var/lib/apt/lists/*
 
 # Ajouter dépôt officiel Docker pour installer docker-compose-plugin

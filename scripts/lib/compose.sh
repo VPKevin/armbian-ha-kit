@@ -14,7 +14,7 @@ set -euo pipefail
 
 choose_compose_source() {
   local action
-  if action="$(whi_menu "Docker Compose" "Quel docker-compose veux-tu utiliser ?" 18 84 10 \
+  if action="$(ui_menu "Docker Compose" "Quel docker-compose veux-tu utiliser ?" 18 84 10 \
     "defaut" "Utiliser ${DEFAULT_COMPOSE_PATH}" \
     "local" "Saisir un chemin local" \
     "url" "Télécharger depuis une URL (http/https)")"; then
@@ -29,9 +29,9 @@ choose_compose_source() {
       ;;
     local)
       local p
-      p="$(whi_input "Docker Compose" "Chemin complet du docker-compose.yml" "$DEFAULT_COMPOSE_PATH")" || return $?
+      p="$(ui_input "Docker Compose" "Chemin complet du docker-compose.yml" "$DEFAULT_COMPOSE_PATH")" || return $?
       if [[ ! -f "$p" ]]; then
-        whi_info "Docker Compose" "Fichier introuvable: $p"
+        ui_info "Docker Compose" "Fichier introuvable: $p"
         return "$UI_BACK"
       fi
       COMPOSE_PATH="$p"
@@ -39,10 +39,10 @@ choose_compose_source() {
     url)
       apt_install curl ca-certificates
       local u dest
-      u="$(whi_input "Docker Compose" "URL (http/https)" "")" || return $?
+      u="$(ui_input "Docker Compose" "URL (http/https)" "")" || return $?
       dest="${STACK_DIR}/docker-compose.remote.yml"
       if ! curl -fsSL "$u" -o "$dest"; then
-        whi_info "Docker Compose" "Téléchargement impossible. Vérifie l'URL/réseau."
+        ui_info "Docker Compose" "Téléchargement impossible. Vérifie l'URL/réseau."
         return "$UI_BACK"
       fi
       chmod 600 "$dest" || true
@@ -95,12 +95,12 @@ setup_compose_prereqs() {
 start_stack() {
   compose_path_resolve
   if ! req_bin docker; then
-    whi_info "Docker" "Docker n'est pas installé. Impossible de démarrer la stack."
+    ui_info "Docker" "Docker n'est pas installé. Impossible de démarrer la stack."
     return 1
   fi
 
   if ! docker compose version >/dev/null 2>&1; then
-    whi_info "Docker" "Docker Compose (v2) est absent. Impossible de démarrer la stack."
+    ui_info "Docker" "Docker Compose (v2) est absent. Impossible de démarrer la stack."
     return 1
   fi
 

@@ -21,7 +21,7 @@ ensure_restic() {
   apt_install restic
 
   if ! req_bin restic; then
-    whi_info "Restic" "Restic n'est pas disponible (commande 'restic' absente après installation)."
+    ui_info "Restic" "Restic n'est pas disponible (commande 'restic' absente après installation)."
     return 1
   fi
 }
@@ -72,13 +72,13 @@ setup_restic_password() {
 
   while true; do
     local ans
-    ans="$(whi_yesno_back "Restic" "Définir un mot de passe restic maintenant ? (sinon il sera généré aléatoirement)" "yes")" || return $?
+    ans="$(ui_yesno_back "Restic" "Définir un mot de passe restic maintenant ? (sinon il sera généré aléatoirement)" "yes")" || return $?
     RESTIC_PROMPTED=1
     if [[ "$ans" == "yes" ]]; then
       local back_to_prompt=0
       while true; do
         local p1 p2
-        if ! p1="$(whi_pass "Restic" "Mot de passe restic (à conserver !)")"; then
+        if ! p1="$(ui_pass "Restic" "Mot de passe restic (à conserver !)")"; then
           local rc=$?
           if [[ $rc -eq $UI_BACK ]]; then
             # Retourne à la question "définir un mot de passe ?"
@@ -89,7 +89,7 @@ setup_restic_password() {
         fi
         RESTIC_PROMPTED=1
 
-        if ! p2="$(whi_pass "Restic" "Confirme le mot de passe restic")"; then
+        if ! p2="$(ui_pass "Restic" "Confirme le mot de passe restic")"; then
           local rc=$?
           if [[ $rc -eq $UI_BACK ]]; then
             # Retourne à la saisie du mot de passe
@@ -100,11 +100,11 @@ setup_restic_password() {
         RESTIC_PROMPTED=1
 
         if [[ -z "${p1:-}" ]]; then
-          whi_info "Restic" "Mot de passe vide."
+          ui_info "Restic" "Mot de passe vide."
           continue
         fi
         if [[ "$p1" != "$p2" ]]; then
-          whi_info "Restic" "Les mots de passe ne correspondent pas."
+          ui_info "Restic" "Les mots de passe ne correspondent pas."
           continue
         fi
 
@@ -126,12 +126,12 @@ setup_restic_password() {
 
 restic_choose_repo() {
   if [[ ! -f "$RESTIC_REPOS" || ! -s "$RESTIC_REPOS" ]]; then
-    whi_info "Restic" "Aucun repository dans ${RESTIC_REPOS}.\n\nPour restaurer, il faut d'abord rendre accessible un repository (NAS/USB monté) et l'ajouter à la configuration."
+    ui_info "Restic" "Aucun repository dans ${RESTIC_REPOS}.\n\nPour restaurer, il faut d'abord rendre accessible un repository (NAS/USB monté) et l'ajouter à la configuration."
 
     # En mode interactif, on peut guider l'utilisateur pour configurer un target.
-    if is_interactive_tty && command -v whi_menu >/dev/null 2>&1; then
+    if is_interactive_tty && command -v ui_menu >/dev/null 2>&1; then
       local choice rc
-      if choice="$(whi_menu "Restic" "Configurer un repository de sauvegarde maintenant ?" 18 90 10 \
+      if choice="$(ui_menu "Restic" "Configurer un repository de sauvegarde maintenant ?" 18 90 10 \
         "nas" "Configurer un NAS (SMB/CIFS)" \
         "usb" "Configurer un disque USB" \
         "cancel" "Annuler")"; then
@@ -151,14 +151,14 @@ restic_choose_repo() {
           if command -v setup_nas_smb >/dev/null 2>&1; then
             setup_nas_smb || true
           else
-            whi_info "Restic" "Setup NAS indisponible (setup_nas_smb introuvable)."
+            ui_info "Restic" "Setup NAS indisponible (setup_nas_smb introuvable)."
           fi
           ;;
         usb)
           if command -v setup_usb_backup >/dev/null 2>&1; then
             setup_usb_backup || true
           else
-            whi_info "Restic" "Setup USB indisponible (setup_usb_backup introuvable)."
+            ui_info "Restic" "Setup USB indisponible (setup_usb_backup introuvable)."
           fi
           ;;
         cancel|*)
@@ -183,9 +183,7 @@ restic_choose_repo() {
     choices+=("$repo" "$repo")
   done < "$RESTIC_REPOS"
 
-  whiptail --title "Restic" --menu "Choisis un repository" 20 92 12 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    "${choices[@]}" 3>&1 1>&2 2>&3
+  ui_menu "Restic" "Choisis un repository" 20 92 12 "${choices[@]}"
 }
 
 restic_choose_snapshot() {
@@ -199,7 +197,7 @@ restic_choose_snapshot() {
   fi
 
   if [[ -z "$snaps" ]]; then
-    whi_info "Restic" "Aucun snapshot trouvé dans $repo."
+    ui_info "Restic" "Aucun snapshot trouvé dans $repo."
     return 1
   fi
 
@@ -209,13 +207,11 @@ restic_choose_snapshot() {
     choices+=("$id" "$label")
   done <<< "$snaps"
 
-  whiptail --title "Restic" --menu "Choisis un snapshot (30 derniers max)" 22 92 12 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    "${choices[@]}" 3>&1 1>&2 2>&3
+  ui_menu "Restic" "Choisis un snapshot (30 derniers max)" 22 92 12 "${choices[@]}"
 }
 
 restore_confirm_wizard() {
-  if ! whi_yesno "Restauration" "Restaurer un backup Restic maintenant ?"; then
+  if ! ui_yesno "Restauration" "Restaurer un backup Restic maintenant ?"; then
     return 0
   fi
   restore_wizard
@@ -225,11 +221,11 @@ restore_wizard() {
   ensure_restic || return 1
 
   if [[ ! -f "$RESTIC_PASS" ]]; then
-    whi_info "Restic" "Mot de passe Restic absent (${RESTIC_PASS})."
+    ui_info "Restic" "Mot de passe Restic absent (${RESTIC_PASS})."
     return 1
   fi
 
-  whi_info "Restauration" "Astuce: il faut d'abord que le repository Restic soit accessible (NAS/USB monté)."
+  ui_info "Restauration" "Astuce: il faut d'abord que le repository Restic soit accessible (NAS/USB monté)."
 
   local repo="" snapshot="" target=""
   local steps=(restore_step_repo restore_step_snapshot restore_step_target restore_step_confirm restore_step_run)
@@ -251,7 +247,7 @@ restore_wizard() {
     esac
   done
 
-  whi_info "Restauration" "Restauration terminée dans: $target"
+  ui_info "Restauration" "Restauration terminée dans: $target"
   return 0
 }
 
@@ -275,10 +271,10 @@ restore_step_snapshot() {
 restore_step_target() {
   local _repo_var="$1" _snap_var="$2" _target_var="$3"
   local target
-  target="$(whi_input "Restauration" "Restaurer dans quel dossier ?" "$STACK_DIR")" || return $?
+  target="$(ui_input "Restauration" "Restaurer dans quel dossier ?" "$STACK_DIR")" || return $?
 
   if [[ "$target" == "/" || -z "$target" ]]; then
-    whi_info "Restauration" "Chemin de destination invalide."
+    ui_info "Restauration" "Chemin de destination invalide."
     return 1
   fi
   mkdir -p "$target"
@@ -289,7 +285,7 @@ restore_step_target() {
 restore_step_confirm() {
   local _repo_var="$1" _snap_var="$2" _target_var="$3"
   local repo="${!_repo_var}" snapshot="${!_snap_var}" target="${!_target_var}"
-  if ! whi_confirm "Restauration" "Confirme la restauration\n\nRepo: $repo\nSnapshot: $snapshot\nCible: $target\n\nÇa peut écraser des fichiers existants."; then
+  if ! ui_confirm "Restauration" "Confirme la restauration\n\nRepo: $repo\nSnapshot: $snapshot\nCible: $target\n\nÇa peut écraser des fichiers existants."; then
     return $?
   fi
   return "$UI_OK"
@@ -303,8 +299,9 @@ restore_step_run() {
   export RESTIC_PASSWORD_FILE="$RESTIC_PASS"
 
   if ! restic restore "$snapshot" --target "$target"; then
-    whi_info "Restauration" "Échec de restauration. Vérifie le mot de passe, le montage NAS/USB et le réseau."
+    ui_info "Restauration" "Échec de restauration. Vérifie le mot de passe, le montage NAS/USB et le réseau."
     return 1
   fi
   return "$UI_OK"
 }
+

@@ -29,16 +29,16 @@ prompt_caddy_domain() {
   ha_domain="$(strip_key_prefix_if_any "HA_DOMAIN" "$ha_domain")"
   le_email="$(strip_key_prefix_if_any "LE_EMAIL" "$le_email")"
 
-  ha_domain="$(whi_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return $?
+  ha_domain="$(ui_input "Caddy" "Nom de domaine (ex: ha.example.com)" "${ha_domain:-}")" || return $?
   CADDY_PROMPTED=1
-  le_email="$(whi_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return $?
+  le_email="$(ui_input "Caddy" "Email Let's Encrypt" "${le_email:-}")" || return $?
   CADDY_PROMPTED=1
 
   ha_domain="$(strip_key_prefix_if_any "HA_DOMAIN" "$ha_domain")"
   le_email="$(strip_key_prefix_if_any "LE_EMAIL" "$le_email")"
 
   if [[ -z "${ha_domain:-}" || -z "${le_email:-}" ]]; then
-    whi_info "Caddy" "Domaine et email sont requis si Caddy est activé."
+    ui_info "Caddy" "Domaine et email sont requis si Caddy est activé."
     return 1
   fi
 

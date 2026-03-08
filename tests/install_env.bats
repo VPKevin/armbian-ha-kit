@@ -14,15 +14,15 @@ setup() {
 
   mkdir -p "$STACK_DIR"
 
-  # stub whiptail: renvoie la valeur par défaut pour inputbox, et "yes" pour yesno
-  WHIPTAIL_LOG="$TMPDIR/whiptail.log"
-  export WHIPTAIL_LOG
+  # stub dialog: renvoie la valeur par défaut pour inputbox, et "yes" pour yesno
+  DIALOG_LOG="$TMPDIR/dialog.log"
+  export DIALOG_LOG
   mkdir -p "$TMPDIR/bin"
-  cat >"$TMPDIR/bin/whiptail" <<'EOF'
+  cat >"$TMPDIR/bin/dialog" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 # Log
-printf '%s\n' "whiptail $*" >>"${WHIPTAIL_LOG}"
+printf '%s\n' "dialog $*" >>"${DIALOG_LOG}"
 
 case "$*" in
   *--inputbox*)
@@ -50,7 +50,7 @@ case "$*" in
     ;;
 esac
 EOF
-  chmod +x "$TMPDIR/bin/whiptail"
+  chmod +x "$TMPDIR/bin/dialog"
   export PATH="$TMPDIR/bin:$PATH"
 
   # stub apt_install/dockers
@@ -140,10 +140,9 @@ EOF
   run env_ensure_from_compose "$COMPOSE_PATH"
   [ "$status" -eq 0 ]
 
-  # notre whiptail stub renvoie la valeur par défaut
+  # notre dialog stub renvoie la valeur par défaut
   run grep -E '^TZ=Europe/Paris$' "$ENV_FILE"
   [ "$status" -eq 0 ]
   run grep -E '^FOO=x$' "$ENV_FILE"
   [ "$status" -eq 0 ]
 }
-

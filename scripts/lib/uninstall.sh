@@ -61,12 +61,12 @@ uninstall_wizard() {
   # require root
   require_root_or_fail || return "$RC_NOT_ROOT"
 
-  if ! whi_yesno "Désinstallation" "Tout désinstaller ?\n\nCette action peut supprimer les conteneurs et, si tu le demandes, les données dans ${STACK_DIR}."; then
+  if ! ui_yesno "Désinstallation" "Tout désinstaller ?\n\nCette action peut supprimer les conteneurs et, si tu le demandes, les données dans ${STACK_DIR}."; then
     return 0
   fi
 
   local remove_data=0
-  if whi_yesno "Désinstallation" "Supprimer aussi les données (config, postgres, backup, caddy, restic) dans ${STACK_DIR} ?\n\nATTENTION: irréversible."; then
+  if ui_yesno "Désinstallation" "Supprimer aussi les données (config, postgres, backup, caddy, restic) dans ${STACK_DIR} ?\n\nATTENTION: irréversible."; then
     remove_data=1
   fi
 
@@ -149,11 +149,11 @@ uninstall_wizard() {
     done
 
     # Afficher la liste proprement
-    whi_info "Désinstallation - paquets" "$pkg_text"
+    ui_info "Désinstallation - paquets" "$pkg_text"
 
     # Demander confirmation simple (yes/no). Utiliser la variante _back qui imprime "yes" ou "no".
     local ans
-    ans="$(whi_yesno_back "Désinstallation" "Supprimer aussi les paquets installés pour le projet ?" "no")" || true
+    ans="$(ui_yesno_back "Désinstallation" "Supprimer aussi les paquets installés pour le projet ?" "no")" || true
     if [[ "${ans:-}" == "yes" ]]; then
       remove_pkgs=1
     else
@@ -195,6 +195,6 @@ uninstall_wizard() {
     uninstall_remove_packages
   fi
 
-  whi_info "Désinstallation" "Désinstallation terminée."
+  ui_info "Désinstallation" "Désinstallation terminée."
   return 0
 }

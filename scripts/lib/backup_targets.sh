@@ -29,12 +29,12 @@ setup_nas_smb() {
 
   local server share user pass mountpoint subdir
 
-  server="$(whi_input "NAS SMB" "Serveur (IP ou nom) :")" || return $?
-  share="$(whi_input "NAS SMB" "Nom du partage (share) :")" || return $?
-  subdir="$(whi_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")" || return $?
-  user="$(whi_input "NAS SMB" "Utilisateur :")" || return $?
-  pass="$(whi_pass "NAS SMB" "Mot de passe :")" || return $?
-  mountpoint="$(whi_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")" || return $?
+  server="$(ui_input "NAS SMB" "Serveur (IP ou nom) :")" || return $?
+  share="$(ui_input "NAS SMB" "Nom du partage (share) :")" || return $?
+  subdir="$(ui_input "NAS SMB" "Sous-dossier (optionnel, vide si aucun) :")" || return $?
+  user="$(ui_input "NAS SMB" "Utilisateur :")" || return $?
+  pass="$(ui_pass "NAS SMB" "Mot de passe :")" || return $?
+  mountpoint="$(ui_input "NAS SMB" "Point de montage :" "/mnt/nasbackup")" || return $?
 
   mkdir -p /etc/samba
   cat > "$SAMBA_CREDS" <<EOF
@@ -49,7 +49,7 @@ EOF
   local opts="credentials=$SAMBA_CREDS,iocharset=utf8,uid=0,gid=0,file_mode=0600,dir_mode=0700,nofail,x-systemd.automount"
 
   # Supprime les anciennes entrées sur ce mountpoint
-  fstab_remove_matching "[[:space:]]${mountpoint//\//\\/}[[:space:]]" || true
+  fstab_remove_matching "[[:space:]]${mountpoint//\//\/}[[:space:]]" || true
 
   echo "$remote  $mountpoint  cifs  $opts  0  0" >> /etc/fstab
 
@@ -60,7 +60,7 @@ EOF
   if ! mountpoint -q "$mountpoint" 2>/dev/null; then
     local err
     err="$(tail -n 50 /tmp/ha-nas-mount.err 2>/dev/null | sed 's/^/  /' || true)"
-    whi_info "NAS SMB" "Le partage n'a pas pu être monté sur $mountpoint.\n\nSi tu utilises x-systemd.automount, un accès au dossier doit déclencher le montage, mais ici il a échoué.\n\nErreur:\n${err}"
+    ui_info "NAS SMB" "Le partage n'a pas pu être monté sur $mountpoint.\n\nSi tu utilises x-systemd.automount, un accès au dossier doit déclencher le montage, mais ici il a échoué.\n\nErreur:\n${err}"
     return 1
   fi
 
@@ -156,13 +156,12 @@ choose_usb_partition() {
   fi
 
   if [[ ${#choices[@]} -eq 0 ]]; then
-    whi_info "USB" "Aucune partition USB détectée.\n\nSi tu vois la clé dans 'lsusb' mais pas ici, vérifie qu'elle apparaît dans 'lsblk' (périphérique /dev/sdX) et qu'elle contient au moins une partition."
+    ui_info "USB" "Aucune partition USB détectée.\n\nSi tu vois la clé dans 'lsusb' mais pas ici, vérifie qu'elle apparaît dans 'lsblk' (périphérique /dev/sdX) et qu'elle contient au moins une partition."
     return 1
   fi
 
-  whiptail --title "USB" --menu "Choisis une partition" 22 100 12 \
-    --ok-button "$(t VALIDATE)" --cancel-button "$(t BACK)" \
-    "${choices[@]}" 3>&1 1>&2 2>&3
+  # Utilise le wrapper ui_menu (stdout: la clé choisie)
+  ui_menu "USB" "Choisis une partition" 22 100 12 "${choices[@]}"
 }
 
 setup_usb_backup() {
@@ -172,19 +171,19 @@ setup_usb_backup() {
   id="$(choose_usb_partition)" || return 1
 
   local mountpoint
-  mountpoint="$(whi_input "USB" "Point de montage :" "/mnt/usbbackup")" || return 1
+  mountpoint="$(ui_input "USB" "Point de montage :" "/mnt/usbbackup")" || return 1
 
   mkdir -p "$mountpoint"
 
   # Nettoyage fstab sur mountpoint
-  fstab_remove_matching "[[:space:]]${mountpoint//\//\\/}[[:space:]]" || true
+  fstab_remove_matching "[[:space:]]${mountpoint//\//\/}[[:space:]]" || true
 
   # Si l'utilisateur a choisi un UUID => on persiste en UUID. Sinon on persiste via le PATH.
   if [[ "$id" =~ ^[0-9A-Fa-f-]{4,}$ ]]; then
     fstab_remove_matching "^UUID=${id}[[:space:]]" || true
     echo "UUID=$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   else
-    fstab_remove_matching "^${id//\//\\/}[[:space:]]" || true
+    fstab_remove_matching "^${id//\//\/}[[:space:]]" || true
     echo "$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
   fi
 
@@ -193,13 +192,13 @@ setup_usb_backup() {
   if ! mount "$mountpoint" 2>/tmp/ha-usb-mount.err; then
     local err
     err="$(tail -n 50 /tmp/ha-usb-mount.err 2>/dev/null | sed 's/^/  /' || true)"
-    whi_info "USB" "Échec du montage de $mountpoint.\n\nVérifie le format (exfat/ext4) et que la partition est correcte.\n\nErreur:\n${err}"
+    ui_info "USB" "Échec du montage de $mountpoint.\n\nVérifie le format (exfat/ext4) et que la partition est correcte.\n\nErreur:\n${err}"
     return 1
   fi
 
   # Vérifie qu'on est bien monté (évite le cas 'mount' OK mais pas de device, ou automount non déclenché)
   if ! mountpoint -q "$mountpoint" 2>/dev/null; then
-    whi_info "USB" "Le point $mountpoint n'est pas monté (mountpoint -q=false).\n\nAstuce: si x-systemd.automount est actif, un accès au dossier doit déclencher le montage."
+    ui_info "USB" "Le point $mountpoint n'est pas monté (mountpoint -q=false).\n\nAstuce: si x-systemd.automount est actif, un accès au dossier doit déclencher le montage."
     return 1
   fi
 
@@ -208,7 +207,7 @@ setup_usb_backup() {
     local err fsline
     err="$(tail -n 50 /tmp/ha-usb-write.err 2>/dev/null | sed 's/^/  /' || true)"
     fsline="$(findmnt -n -o FSTYPE,OPTIONS --target "$mountpoint" 2>/dev/null || true)"
-    whi_info "USB" "Le point de montage n'est pas écrivable: $mountpoint\n\nFS/options: ${fsline}\n\nErreur:\n${err}"
+    ui_info "USB" "Le point de montage n'est pas écrivable: $mountpoint\n\nFS/options: ${fsline}\n\nErreur:\n${err}"
     return 1
   fi
 
@@ -219,10 +218,10 @@ setup_usb_backup() {
     local err fsline
     err="$(tail -n 80 /tmp/ha-usb-restic.err 2>/dev/null | sed 's/^/  /' || true)"
     fsline="$(findmnt -n -o FSTYPE,OPTIONS --target "$mountpoint" 2>/dev/null || true)"
-    whi_info "USB" "Échec d'initialisation du repository Restic sur USB.\n\nRepo: $mountpoint/restic-ha\nFS/options: ${fsline}\n\nErreur:\n${err}"
+    ui_info "USB" "Échec d'initialisation du repository Restic sur USB.\n\nRepo: $mountpoint/restic-ha\nFS/options: ${fsline}\n\nErreur:\n${err}"
     return 1
   fi
 
-  whi_info "USB" "USB configurée.\n\nMount: $mountpoint\nRepo Restic: $mountpoint/restic-ha"
+  ui_info "USB" "USB configurée.\n\nMount: $mountpoint\nRepo Restic: $mountpoint/restic-ha"
   return 0
 }

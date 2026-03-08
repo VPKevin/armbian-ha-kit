@@ -11,8 +11,8 @@ set -euo pipefail
 
 setup_systemd_backup() {
   if [[ ! -d /run/systemd/system ]] || ! command -v systemctl >/dev/null 2>&1; then
-    if command -v whi_info >/dev/null 2>&1; then
-      whi_info "Systemd" "Systemd n'est pas disponible dans cet environnement. Le timer de backup ne sera pas installé."
+    if command -v ui_info >/dev/null 2>&1; then
+      ui_info "Systemd" "Systemd n'est pas disponible dans cet environnement. Le timer de backup ne sera pas installé."
     else
       echo "[ha-backup] Systemd indisponible: timer non installé." >&2
     fi
@@ -32,7 +32,7 @@ setup_systemd_backup() {
   if [[ -f "${STACK_DIR}/ha-backup.sh" ]]; then
     install -m 0755 "${STACK_DIR}/ha-backup.sh" /usr/local/sbin/ha-backup.sh
   else
-    whi_info "Systemd" "Fichier manquant: ${STACK_DIR}/ha-backup.sh\nImpossible d'installer le service systemd de backup."
+    ui_info "Systemd" "Fichier manquant: ${STACK_DIR}/ha-backup.sh\nImpossible d'installer le service systemd de backup."
     return
   fi
 

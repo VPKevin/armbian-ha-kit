@@ -38,6 +38,44 @@ source "${SCRIPT_DIR}/lib/uninstall.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/status.sh"
 
+# Ensure ui_menu exists — deployed /srv/ha-stack may contain an older ui.sh.
+if ! command -v ui_menu >/dev/null 2>&1; then
+  if [[ -f "${STACK_DIR}/scripts/lib/ui.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${STACK_DIR}/scripts/lib/ui.sh" || true
+  fi
+fi
+
+# Minimal fallback ui_menu (non-interactive fallback) to avoid 'command not found' at runtime.
+if ! command -v ui_menu >/dev/null 2>&1; then
+  ui_menu() {
+    local title="$1" prompt="$2" height="$3" width="$4" list_height="$5"
+    shift 5
+    # Print the menu to stdout and pick the first item as default in non-interactive context.
+    printf '%s\n%s\n' "$title" "$prompt"
+    local i=1
+    local keys=()
+    while (( $# > 0 )); do
+      keys+=("$1")
+      shift
+      local label="$1"
+      shift
+      printf '%d) %s\n' "$i" "$label"
+      i=$((i+1))
+    done
+    if is_interactive_tty; then
+      read -rp "Choix (num): " sel
+      sel=${sel:-1}
+    else
+      sel=1
+    fi
+    local key
+    key="${keys[$((sel-1))]:-}"
+    printf '%s' "$key"
+    return "$UI_OK"
+  }
+fi
+
 # ---------------------------------------------------------------------------
 # Contracts / minimal documentation for key functions (P0)
 # - Inputs: via globals (STACK_DIR, ENV_FILE, COMPOSE_PATH, etc.) or args where noted
@@ -93,13 +131,12 @@ ensure_dirs() {
 }
 
 main_menu() {
-  whiptail --title "Armbian HA Kit" --menu "Que veux-tu faire ?" 18 80 10 \
-    --ok-button "$(t VALIDATE)" --cancel-button "Quitter" \
+  # Utilise ui_menu (dialog) pour le premier menu. Le reste de l'UI reste basé sur whiptail.
+  ui_menu "Armbian HA Kit" "Que veux-tu faire ?" 18 80 10 \
     "install" "Installer / configurer la stack" \
     "restore" "Restaurer un backup (Restic)" \
     "status" "Vérifier le status (containers, backup, options)" \
-    "remove" "Tout désinstaller" \
-    3>&1 1>&2 2>&3
+    "remove" "Tout désinstaller"
 }
 
 prompt_features() {
@@ -136,10 +173,10 @@ prompt_features() {
   local ans default_item
   if [[ $default_has_proxy -eq 1 ]]; then
     default_item="yes"
-    ans="$(whi_yesno_back "Exposition" "Un reverse proxy externe est actuellement configuré. Le garder ?\n\nExemples: Nginx/Traefik/HAProxy, routeur/box qui fait proxy." "$default_item")" || return $?
+    ans="$(ui_yesno_back "Exposition" "Un reverse proxy externe est actuellement configuré. Le garder ?\n\nExemples: Nginx/Traefik/HAProxy, routeur/box qui fait proxy." "$default_item")" || return $?
   else
     default_item="no"
-    ans="$(whi_yesno_back "Exposition" "As-tu déjà un reverse proxy (Nginx/Traefik/HAProxy) qui publiera Home Assistant ?\n\nSi oui: ce kit ne doit pas utiliser les ports 80/443 et Home Assistant devra faire confiance à l'IP du proxy." "$default_item")" || return $?
+    ans="$(ui_yesno_back "Exposition" "As-tu déjà un reverse proxy (Nginx/Traefik/HAProxy) qui publiera Home Assistant ?\n\nSi oui: ce kit ne doit pas utiliser les ports 80/443 et Home Assistant devra faire confiance à l'IP du proxy." "$default_item")" || return $?
   fi
   if [[ "$ans" == "yes" ]]; then
     has_external_proxy=1
@@ -153,7 +190,7 @@ prompt_features() {
     existing_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
 
     local proxy_ip
-    proxy_ip="$(whi_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || return $?
+    proxy_ip="$(ui_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || return $?
 
     # Si renseigné, on stocke. Sinon on laisse vide (mais HA pourra refuser les headers si le proxy n'est pas ajouté).
     if [[ -n "${proxy_ip:-}" ]]; then
@@ -166,10 +203,10 @@ prompt_features() {
     enable_caddy=0
   else
     if [[ $default_caddy -eq 1 ]]; then
-      ans="$(whi_yesno_back "Exposition" "Activer Caddy sur cette machine (reverse proxy + HTTPS) ?\n\nÇa utilise les ports 80/443." "yes")" || return $?
+      ans="$(ui_yesno_back "Exposition" "Activer Caddy sur cette machine (reverse proxy + HTTPS) ?\n\nÇa utilise les ports 80/443." "yes")" || return $?
       [[ "$ans" == "yes" ]] && enable_caddy=1 || enable_caddy=0
     else
-      ans="$(whi_yesno_back "Exposition" "Caddy est actuellement désactivé. Le réactiver ?\n\nÇa utilisera les ports 80/443." "no")" || return $?
+      ans="$(ui_yesno_back "Exposition" "Caddy est actuellement désactivé. Le réactiver ?\n\nÇa utilisera les ports 80/443." "no")" || return $?
       [[ "$ans" == "yes" ]] && enable_caddy=1 || enable_caddy=0
     fi
   fi
@@ -180,10 +217,10 @@ prompt_features() {
     enable_upnp=0
   else
     if [[ $default_upnp -eq 1 ]]; then
-      ans="$(whi_yesno_back "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement." "yes")" || return $?
+      ans="$(ui_yesno_back "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement." "yes")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     else
-      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
+      ans="$(ui_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     fi
   fi
@@ -294,10 +331,11 @@ Backups
 EOF
 )
 
-    whiptail --title "Résumé" --msgbox "$summary" 30 96 --ok-button "OK"
+    # Remplace le msgbox direct par ui_info
+    ui_info "Résumé" "$summary"
 
     local action action_rc
-    if action="$(whi_menu "Résumé" "Que veux-tu faire ?" 18 90 10 \
+    if action="$(ui_menu "Résumé" "Que veux-tu faire ?" 18 90 10 \
       "finaliser" "Terminer l'installation" \
       "revoir" "Revoir ce résumé" \
       "edit" "Modifier la configuration" \
@@ -324,7 +362,7 @@ EOF
         return "$UI_ABORT"
         ;;
       finaliser)
-        if whi_confirm "Résumé" "Finaliser l'installation maintenant ?"; then
+        if ui_confirm "Résumé" "Finaliser l'installation maintenant ?"; then
           return 0
         fi
         continue
@@ -332,7 +370,7 @@ EOF
       edit)
         while true; do
           local edit_action edit_rc
-          if edit_action="$(whi_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
+          if edit_action="$(ui_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
             "edit-compose" "Changer le docker-compose utilisé" \
             "edit-env" "Compléter / modifier le .env (variables compose)" \
             "caddy" "Domaine + email (Caddy)" \
@@ -378,7 +416,7 @@ EOF
 
               # Les whi_input / whi_pass retournent potentiellement UI_BACK/UI_ABORT.
               # Ici on préserve le comportement d'annulation en testant le rc.
-              if pg_user_tmp="$(whi_input "Postgres" "POSTGRES_USER" "$pg_user")"; then
+              if pg_user_tmp="$(ui_input "Postgres" "POSTGRES_USER" "$pg_user")"; then
                 pg_user="$pg_user_tmp"
               else
                 # si Cancel/Back/Abort, respecter le code de retour
@@ -395,7 +433,7 @@ EOF
                 fi
               fi
 
-              if pg_db_tmp="$(whi_input "Postgres" "POSTGRES_DB" "$pg_db")"; then
+              if pg_db_tmp="$(ui_input "Postgres" "POSTGRES_DB" "$pg_db")"; then
                 pg_db="$pg_db_tmp"
               else
                 local tmp_rc=$?
@@ -408,7 +446,7 @@ EOF
                 fi
               fi
 
-              if pg_pass_tmp="$(whi_pass "Postgres" "POSTGRES_PASSWORD")"; then
+              if pg_pass_tmp="$(ui_pass "Postgres" "POSTGRES_PASSWORD")"; then
                 pg_pass="$pg_pass_tmp"
               else
                 local tmp_rc=$?
@@ -444,7 +482,7 @@ EOF
               setup_restic_password || true
               ;;
             nas)
-              setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+              setup_nas_smb || ui_info "NAS" "Configuration NAS annulée."
               ;;
             usb)
               setup_usb_backup || true
@@ -584,12 +622,12 @@ step_restic() {
 
 step_backup_targets() {
   local ans
-  ans="$(whi_yesno_back "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?" "no")" || return $?
+  ans="$(ui_yesno_back "Backup" "Rendre accessible un repository restic sur un NAS (SMB/CIFS) ?" "no")" || return $?
   if [[ "$ans" == "yes" ]]; then
-    setup_nas_smb || whi_info "NAS" "Configuration NAS annulée."
+    setup_nas_smb || ui_info "NAS" "Configuration NAS annulée."
   fi
 
-  ans="$(whi_yesno_back "Backup" "Rendre accessible un repository restic sur un disque USB ?" "no")" || return $?
+  ans="$(ui_yesno_back "Backup" "Rendre accessible un repository restic sur un disque USB ?" "no")" || return $?
   if [[ "$ans" == "yes" ]]; then
     setup_usb_backup || true
   fi
@@ -608,8 +646,11 @@ main() {
 
   # deps minimales pour l’install
   # NOTE: sur Debian trixie, `awk` est un paquet *virtuel* -> installer une implémentation.
-  apt_install whiptail sed coreutils util-linux ca-certificates
+  apt_install sed coreutils util-linux ca-certificates
   apt_install mawk || apt_install gawk
+
+  # dialog nécessaire pour le menu principal
+  apt_install dialog || true
 
   setup_compose_prereqs
 
@@ -624,19 +665,19 @@ main() {
     case "$action" in
       install)
         if ! run_install_wizard; then
-          whi_info "Installation" "Installation quittée. Rien n'a été démarré."
+          ui_info "Installation" "Installation quittée. Rien n'a été démarré."
           continue
         fi
 
         configure_homeassistant_yaml
         if start_stack; then
           if wait_for_health 240; then
-            whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
+            ui_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
           else
-            whi_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nSi les conteneurs restent en état 'Created', vérifie les variables du .env (ex: TZ, HA_DOMAIN/LE_EMAIL si Caddy).\n\nLes derniers logs ont été affichés dans la console."
+            ui_info "Installation" "La stack a démarré mais certains services ne sont pas healthy.\n\nSi les conteneurs restent en état 'Created', vérifie les variables du .env (ex: TZ, HA_DOMAIN/LE_EMAIL si Caddy).\n\nLes derniers logs ont été affichés dans la console."
           fi
         else
-          whi_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
+          ui_info "Installation" "Installation terminée, mais la stack n'a pas pu être démarrée automatiquement.\n\nDémarrage manuel:\n  cd $STACK_DIR && docker compose -f $COMPOSE_PATH up -d"
         fi
         ;;
 
@@ -646,9 +687,9 @@ main() {
         # En mode restauration, on évite les questions d'exposition (Caddy/UPnP/proxy).
         # On a seulement besoin de variables de base + accès au repo Restic.
         if restore_wizard; then
-          whi_info "Restauration" "Restauration terminée."
+          ui_info "Restauration" "Restauration terminée."
         else
-          whi_info "Restauration" "Restauration annulée / échouée."
+          ui_info "Restauration" "Restauration annulée / échouée."
         fi
         ;;
 

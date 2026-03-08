@@ -12,8 +12,8 @@ sanitize_env_value() {
   echo "$v"
 }
 
-whi_escape() {
-  # whiptail interprète certains caractères. On neutralise le plus problématique.
+ui_escape() {
+  # dialog interprète certains caractères. On neutralise le plus problématique.
   local s="$1"
   s="${s//=/\=}"
   echo "$s"
@@ -142,7 +142,7 @@ env_ensure_from_compose() {
     default="$(strip_key_prefix_if_any "$name" "$default")"
 
     local val
-    val="$(whi_input "Variables Compose" "$(whi_escape "$name") (manquant dans .env)" "$default")" || return $?
+    val="$(ui_input "Variables Compose" "$(ui_escape "$name") (manquant dans .env)" "$default")" || return $?
     env_set_kv "$name" "$val" "$ENV_FILE"
     ENV_PROMPTED=1
   done <<< "$vars"
@@ -155,3 +155,5 @@ env_ensure_from_compose() {
 
 # End of env helpers
 
+# Backward compatibility alias
+whi_escape() { ui_escape "$@"; }
