@@ -117,9 +117,13 @@ ui_info() {
     printf '\n[%s]\n%s\n\n' "$title" "$msg" >&2
     return "$UI_OK"
   fi
-  _ui_dialog_capture --title "$title" --msgbox "$msg" 12 80 --ok-label "$(t OK)" >/dev/null
-  local rc=$?
-  _ui_map_rc_dialog "$rc" || return $?
+
+  # Note: ui_info is purement informatif. Si l'utilisateur appuie sur Cancel/Esc,
+  # on ne souhaite pas que cela interrompe le flux d'exécution du script sous
+  # `set -e`. Par conséquent, on capture et on ignore le code de retour de
+  # dialog et on renvoie toujours UI_OK.
+  _ui_dialog_capture --title "$title" --msgbox "$msg" 12 80 --ok-label "$(t OK)" >/dev/null || true
+  return "$UI_OK"
 }
 
 # ui_confirm: yes/no confirmation (same as ui_yesno)
@@ -127,17 +131,28 @@ ui_confirm() { ui_yesno "$@"; }
 
 # ui_yesno_back: menu-based yes/no with Back via Cancel; stdout: yes|no
 ui_yesno_back() {
-  local title="$1" prompt="$2" default_item="${3:-}"
-  local args=()
-  if [[ -n "$default_item" ]]; then
-    args+=(--default-item "$default_item")
-  fi
-  local out
-  out="$(_ui_dialog_capture --title "$title" --menu "$prompt" 12 70 2 "${args[@]}" \
-    yes "$(t YES)" no "$(t NO)" --ok-label "$(t VALIDATE)" --cancel-label "$(t BACK)")"
+  local title="$1"
+  local prompt="$2"
+  local default="$3"
+  local choice rc
+
+  choice=$(dialog \
+    --clear \
+    --title "$title" \
+    --ok-label "OK" \
+    --cancel-label "Return" \
+    --menu "$prompt" \
+    14 70 2 \
+    yes "Oui" \
+    no  "Non" \
+    2>&1 >/dev/tty)
   local rc=$?
+
+  tput rmcup
+  tput cnorm
+
   _ui_map_rc_dialog "$rc" || return $?
-  printf '%s' "$out"
+  printf '%s' "choice"
 }
 
 # Menu générique: implémentation basée sur dialog (API compatible)
@@ -319,8 +334,6 @@ _ui_restore_terminal() {
     if command -v tput >/dev/null 2>&1; then
       tput rmcup >/dev/tty 2>/dev/null || true
     fi
-    printf '%b' '\e[?1049l' >/dev/tty 2>/dev/null || true
-    printf '%b' '\e[H\e[2J' >/dev/tty 2>/dev/null || true
     command -v tput >/dev/null 2>&1 && tput cnorm >/dev/tty 2>/dev/null || true
     stty sane </dev/tty >/dev/tty 2>/dev/null || true
   fi

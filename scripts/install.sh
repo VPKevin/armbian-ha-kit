@@ -63,12 +63,7 @@ if ! command -v ui_menu >/dev/null 2>&1; then
       printf '%d) %s\n' "$i" "$label"
       i=$((i+1))
     done
-    if is_interactive_tty; then
-      read -rp "Choix (num): " sel
-      sel=${sel:-1}
-    else
-      sel=1
-    fi
+    sel=1
     local key
     key="${keys[$((sel-1))]:-}"
     printf '%s' "$key"
