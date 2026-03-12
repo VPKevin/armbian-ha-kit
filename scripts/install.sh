@@ -151,9 +151,11 @@ prompt_features() {
   if [[ $has_external_proxy -eq 1 ]]; then
     local existing_trusted
     existing_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
+    existing_trusted="$(env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" "$existing_trusted")"
 
     local proxy_ip
     proxy_ip="$(whi_input "Proxy externe" "IP ou CIDR du proxy à autoriser (ex: 192.168.1.10 ou 10.0.0.0/24)\n\nAstuce: si tu as plusieurs proxies, sépare par des virgules." "${existing_trusted:-}")" || return $?
+    proxy_ip="$(env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" "$proxy_ip")"
 
     # Si renseigné, on stocke. Sinon on laisse vide (mais HA pourra refuser les headers si le proxy n'est pas ajouté).
     if [[ -n "${proxy_ip:-}" ]]; then

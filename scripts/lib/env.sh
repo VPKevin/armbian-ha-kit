@@ -42,6 +42,30 @@ strip_key_prefix_if_any() {
   fi
 }
 
+env_csv_normalize_for_key() {
+  local key="$1" raw="${2:-}" item
+  local -a normalized=()
+  local seen=$'\n'
+
+  while IFS= read -r item; do
+    item="$(printf '%s' "$item" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    item="$(strip_key_prefix_if_any "$key" "$item")"
+    item="$(sanitize_env_value "$item")"
+    item="$(printf '%s' "$item" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    [[ -z "${item:-}" ]] && continue
+
+    if [[ "$seen" == *$'\n'"$item"$'\n'* ]]; then
+      continue
+    fi
+
+    normalized+=("$item")
+    seen+="$item"$'\n'
+  done < <(printf '%s' "$raw" | tr ',' '\n')
+
+  local IFS=,
+  printf '%s' "${normalized[*]}"
+}
+
 # env_set_kv: set key=value in file idempotently. Return RC_OK on success.
 env_set_kv() {
   local key="$1" value="$2" file="$3"

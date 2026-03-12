@@ -70,6 +70,17 @@ test_install_sh_loaded() {
   # Source le script pour accéder aux fonctions
   # shellcheck disable=SC1091
   source "./scripts/install.sh"
+
+  export STACK_DIR="$TMPDIR/stack"
+  export ENV_FILE="$STACK_DIR/.env"
+  export RESTIC_DIR="$STACK_DIR/restic"
+  export RESTIC_REPOS="$RESTIC_DIR/repos.conf"
+  export RESTIC_PASS="$RESTIC_DIR/password"
+  export SAMBA_CREDS="$TMPDIR/creds"
+  export DEFAULT_COMPOSE_PATH="$TMPDIR/docker-compose.yml"
+  export COMPOSE_PATH="$DEFAULT_COMPOSE_PATH"
+
+  mkdir -p "$STACK_DIR"
 }
 
 @test "env_set_kv ajoute une clé sans supprimer les autres" {
@@ -145,5 +156,59 @@ EOF
   [ "$status" -eq 0 ]
   run grep -E '^FOO=x$' "$ENV_FILE"
   [ "$status" -eq 0 ]
+}
+
+@test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
+  test_install_sh_loaded
+
+  run env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" " PROXY_TRUSTED_PROXIES=192.168.1.150 , 10.0.0.0/24,PROXY_TRUSTED_PROXIES=192.168.1.150 ,, "
+  [ "$status" -eq 0 ]
+  [ "$output" = "192.168.1.150,10.0.0.0/24" ]
+}
+
+@test "configure_homeassistant_yaml génère une liste trusted_proxies propre depuis .env" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  printf 'PROXY_TRUSTED_PROXIES=PROXY_TRUSTED_PROXIES=192.168.1.150, 10.0.0.0/24\n' >"$ENV_FILE"
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F '    - 10.0.0.0/24' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'PROXY_TRUSTED_PROXIES=' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
+@test "configure_homeassistant_yaml répare une liste trusted_proxies déjà polluée" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  cat >"$STACK_DIR/config/configuration.yaml" <<'EOF'
+homeassistant:
+  name: Test
+
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - PROXY_TRUSTED_PROXIES=192.168.1.150
+EOF
+  printf 'PROXY_TRUSTED_PROXIES=PROXY_TRUSTED_PROXIES=192.168.1.150\n' >"$ENV_FILE"
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'PROXY_TRUSTED_PROXIES=' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -ne 0 ]
 }
 

@@ -19,9 +19,60 @@ detect_docker_subnet() {
   fi
 }
 
+build_homeassistant_trusted_lines() {
+  local subnet="$1" extra_trusted="${2:-}" line trusted_csv trusted_lines=""
+
+  trusted_csv="$(env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" "${subnet}${extra_trusted:+,${extra_trusted}}")"
+  while IFS= read -r line; do
+    [[ -z "${line:-}" ]] && continue
+    trusted_lines+="${trusted_lines:+\n}    - ${line}"
+  done < <(printf '%s' "$trusted_csv" | tr ',' '\n')
+
+  printf '%s' "$trusted_lines"
+}
+
+rewrite_homeassistant_trusted_proxies() {
+  local cfg="$1" trusted_lines="$2"
+  local tmp
+
+  [[ -f "$cfg" ]] || return 0
+  grep -q '^http:' "$cfg" || return 0
+  grep -q '^  trusted_proxies:[[:space:]]*$' "$cfg" || return 0
+
+  tmp="$(mktemp)"
+  awk -v trusted_lines="$trusted_lines" '
+    BEGIN {
+      n = split(trusted_lines, repl, /\n/)
+      replaced = 0
+      skip = 0
+    }
+    {
+      if (skip) {
+        if ($0 ~ /^    - / || $0 ~ /^[[:space:]]*$/) {
+          next
+        }
+        skip = 0
+      }
+
+      print
+
+      if (!replaced && $0 ~ /^  trusted_proxies:[[:space:]]*$/) {
+        for (i = 1; i <= n; i++) {
+          print repl[i]
+        }
+        replaced = 1
+        skip = 1
+      }
+    }
+  ' "$cfg" >"$tmp"
+
+  cat "$tmp" >"$cfg"
+  rm -f "$tmp"
+}
+
 configure_homeassistant_yaml() {
   local cfg="${STACK_DIR}/config/configuration.yaml"
-  local subnet
+  local subnet extra_trusted trusted_lines
   subnet="$(detect_docker_subnet)"
 
   if [[ ! -f "$cfg" ]]; then
@@ -34,26 +85,15 @@ configure_homeassistant_yaml() {
   : "${POSTGRES_DB:=homeassistant}"
   : "${POSTGRES_PASSWORD:=changeme}"
 
+  extra_trusted=""
+  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    extra_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
+    extra_trusted="$(env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" "$extra_trusted")"
+  fi
+
+  trusted_lines="$(build_homeassistant_trusted_lines "$subnet" "$extra_trusted")"
+
   if ! grep -q "^recorder:" "$cfg"; then
-    # Construit trusted_proxies avec indentation correcte.
-    # Par défaut: subnet docker bridge (cas proxy dans docker).
-    local trusted_lines="    - ${subnet}"
-
-    # Si PROXY_TRUSTED_PROXIES est défini dans le .env, on l'ajoute.
-    # Format attendu: "192.168.1.10,10.0.0.0/24"
-    local extra_trusted=""
-    if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
-      extra_trusted="$(env_get "PROXY_TRUSTED_PROXIES" "$ENV_FILE" 2>/dev/null || true)"
-    fi
-
-    if [[ -n "${extra_trusted:-}" ]]; then
-      local line
-      while IFS= read -r line; do
-        [[ -z "${line:-}" ]] && continue
-        trusted_lines+="\n    - ${line}"
-      done < <(echo "$extra_trusted" | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-    fi
-
     cat >> "$cfg" <<EOF
 
 recorder:
@@ -64,5 +104,7 @@ http:
   trusted_proxies:
 $(printf '%b' "$trusted_lines")
 EOF
+  else
+    rewrite_homeassistant_trusted_proxies "$cfg" "$trusted_lines"
   fi
 }
