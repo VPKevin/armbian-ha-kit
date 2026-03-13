@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:16
@@ -14,11 +16,13 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1 || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks:
+      - ha-network
 
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
@@ -27,7 +31,8 @@ services:
     network_mode: host
     privileged: true
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     env_file: .env
     environment:
       - TZ=${TZ}
@@ -40,6 +45,8 @@ services:
       timeout: 5s
       retries: 20
       start_period: 60s
+    networks:
+      - ha-network
 
   caddy:
     profiles: ["caddy"]
@@ -60,3 +67,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    networks:
+      - ha-network
+
+networks:
+  ha-network:
+    driver: bridge
