@@ -53,6 +53,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /srv/ha-stack/Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/ha-stack/caddy/data:/data
