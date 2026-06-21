@@ -232,6 +232,42 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "prepare_zigbee2mqtt_stack migre une ancienne configuration existante en mettant à jour serial" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/zigbee2mqtt/data"
+  cat >"$STACK_DIR/zigbee2mqtt/data/configuration.yaml" <<'EOF'
+homeassistant:
+  enabled: true
+frontend:
+  enabled: true
+  port: 8080
+mqtt:
+  server: mqtt://mqtt:1883
+serial:
+  port: >-
+    /dev/serial/by-id/usb-Texas_Instruments_TI_CC2531_USB_CDC___0X00124B0008B84E6E-if00
+advanced:
+  network_key:
+    - 126
+    - 32
+  pan_id: 4848
+version: 5
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyUSB0" "zstack"
+  [ "$status" -eq 0 ]
+
+  run grep -F '  port: /dev/ttyUSB0' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F '  adapter: zstack' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'version: 5' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'pan_id: 4848' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
 @test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
   test_install_sh_loaded
 

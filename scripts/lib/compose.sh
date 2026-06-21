@@ -116,6 +116,9 @@ start_stack() {
   if command -v sync_zigbee_env >/dev/null 2>&1 && command -v zigbee_selected_port_get >/dev/null 2>&1 && command -v zigbee_adapter_get >/dev/null 2>&1; then
     sync_zigbee_env "${zigbee_mode:-none}" "$(zigbee_selected_port_get)" "$(zigbee_adapter_get 2>/dev/null || echo none)"
     zigbee_mode="${ZIGBEE_MODE:-$zigbee_mode}"
+    if [[ "${zigbee_mode:-none}" == "zigbee2mqtt" ]] && command -v prepare_zigbee2mqtt_stack >/dev/null 2>&1; then
+      prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-$(zigbee_selected_port_get)}" "$(zigbee_adapter_get 2>/dev/null || echo none)"
+    fi
   fi
 
   local profiles=()

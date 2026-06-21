@@ -287,12 +287,87 @@ EOF
   chmod 600 "$cfg" || true
 }
 
+zigbee_upsert_z2m_serial_config() {
+  local cfg="$1"
+  local serial_port="$2"
+  local adapter="$3"
+  local tmp block_file
+
+  block_file="$(mktemp)"
+  cat >"$block_file" <<EOF
+serial:
+  port: ${serial_port}
+$(if [[ "$adapter" != "none" ]]; then printf '  adapter: %s\n' "$adapter"; fi)
+EOF
+
+  tmp="$(mktemp)"
+  awk -v block_file="$block_file" '
+    BEGIN {
+      while ((getline line < block_file) > 0) {
+        repl[++n] = line
+      }
+      close(block_file)
+      in_serial = 0
+      saw_serial = 0
+      inserted = 0
+    }
+
+    function print_block() {
+      if (inserted) {
+        return
+      }
+      for (i = 1; i <= n; i++) {
+        print repl[i]
+      }
+      inserted = 1
+    }
+
+    {
+      if (!in_serial && $0 ~ /^serial:[[:space:]]*$/) {
+        in_serial = 1
+        saw_serial = 1
+        next
+      }
+
+      if (in_serial) {
+        if ($0 ~ /^[^[:space:]][^:]*:[[:space:]]*$/ || $0 ~ /^[^[:space:]][^:]*:[[:space:]]*[^[:space:]].*$/) {
+          print_block()
+          in_serial = 0
+          print
+        }
+        next
+      }
+
+      print
+    }
+
+    END {
+      if (in_serial) {
+        print_block()
+      }
+
+      if (!saw_serial) {
+        if (NR > 0) {
+          print ""
+        }
+        print_block()
+      }
+    }
+  ' "$cfg" >"$tmp"
+
+  cat "$tmp" >"$cfg"
+  rm -f "$block_file"
+  rm -f "$tmp"
+  chmod 600 "$cfg" || true
+}
+
 zigbee_write_z2m_config() {
   local serial_port="$1"
   local adapter="$2"
   local cfg="${STACK_DIR}/zigbee2mqtt/data/configuration.yaml"
 
-  if [[ -f "$cfg" ]] && ! grep -q '^# Managed by armbian-ha-kit$' "$cfg"; then
+  if [[ -f "$cfg" ]]; then
+    zigbee_upsert_z2m_serial_config "$cfg" "$serial_port" "$adapter"
     return 0
   fi
 
@@ -417,6 +492,8 @@ prompt_zigbee_mode() {
     return 0
   done
 }
+
+
 
 
 
