@@ -158,6 +158,68 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "setup_env ajoute les defaults Zigbee pour les anciennes installations" {
+  test_install_sh_loaded
+
+  cat >"$ENV_FILE" <<'EOF'
+POSTGRES_USER=ha
+POSTGRES_DB=homeassistant
+POSTGRES_PASSWORD=secret
+EOF
+
+  run setup_env
+  [ "$status" -eq 0 ]
+
+  run grep -E '^ZIGBEE_MODE=none$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_SERIAL_PORT=/dev/ttyUSB0$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "sync_zigbee_env expose le dongle à Home Assistant quand ZHA est choisi" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+
+  run sync_zigbee_env "zha" "/dev/serial/by-id/usb-test-zigbee"
+  [ "$status" -eq 0 ]
+
+  run grep -E '^ZIGBEE_MODE=zha$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_SERIAL_PORT=/dev/serial/by-id/usb-test-zigbee$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/serial/by-id/usb-test-zigbee$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "sync_zigbee_env masque le dongle à Home Assistant hors mode ZHA" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+
+  run sync_zigbee_env "zigbee2mqtt" "/dev/ttyACM0"
+  [ "$status" -eq 0 ]
+
+  run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack génère les fichiers persistants gérés" {
+  test_install_sh_loaded
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'listener 1883 0.0.0.0' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'server: mqtt://mqtt:1883' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'port: /dev/ttyACM0' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
 @test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
   test_install_sh_loaded
 

@@ -20,14 +20,21 @@ wait_for_health() {
   # Construit la liste des conteneurs attendus selon les features.
   local expected=(postgres homeassistant)
   local enable_caddy="${ENABLE_CADDY:-}"
+  local zigbee_mode="${ZIGBEE_MODE:-}"
 
   # Si le .env existe, on tente de lire ENABLE_CADDY depuis celui-ci.
   if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
     enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
   fi
+  if [[ -z "${zigbee_mode:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    zigbee_mode="$(env_get "ZIGBEE_MODE" "$ENV_FILE" 2>/dev/null || true)"
+  fi
 
   if [[ "${enable_caddy:-1}" == "1" || "${enable_caddy:-}" == "true" ]]; then
     expected+=(caddy)
+  fi
+  if [[ "${zigbee_mode:-none}" == "zigbee2mqtt" ]]; then
+    expected+=(mqtt zigbee2mqtt)
   fi
 
   while true; do
@@ -45,6 +52,8 @@ wait_for_health() {
           postgres) name="ha-postgres" ;;
           homeassistant) name="homeassistant" ;;
           caddy) name="ha-caddy" ;;
+          mqtt) name="ha-mqtt" ;;
+          zigbee2mqtt) name="ha-zigbee2mqtt" ;;
           *) name="$svc" ;;
         esac
       fi
@@ -88,6 +97,8 @@ wait_for_health() {
               postgres) name="ha-postgres" ;;
               homeassistant) name="homeassistant" ;;
               caddy) name="ha-caddy" ;;
+              mqtt) name="ha-mqtt" ;;
+              zigbee2mqtt) name="ha-zigbee2mqtt" ;;
               *) name="$svc" ;;
             esac
           fi

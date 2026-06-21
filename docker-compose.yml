@@ -34,9 +34,12 @@ services:
     env_file: .env
     environment:
       - TZ=${TZ}
+    devices:
+      - ${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}:${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}
     volumes:
       - /srv/ha-stack/config:/config
       - /etc/localtime:/etc/localtime:ro
+      - /run/udev:/run/udev:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ >/dev/null 2>&1 || curl -fsS http://127.0.0.1:8123/ >/dev/null 2>&1 || exit 1"]
       interval: 15s
@@ -65,6 +68,40 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    networks:
+      - ha-network
+
+  mqtt:
+    profiles: ["zigbee2mqtt"]
+    image: eclipse-mosquitto:2
+    container_name: ha-mqtt
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - /srv/ha-stack/mosquitto/config:/mosquitto/config
+      - /srv/ha-stack/mosquitto/data:/mosquitto/data
+      - /srv/ha-stack/mosquitto/log:/mosquitto/log
+    networks:
+      - ha-network
+
+  zigbee2mqtt:
+    profiles: ["zigbee2mqtt"]
+    image: ghcr.io/koenkk/zigbee2mqtt:latest
+    container_name: ha-zigbee2mqtt
+    restart: unless-stopped
+    depends_on:
+      - mqtt
+    environment:
+      - TZ=${TZ}
+    devices:
+      - ${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}:${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}
+    volumes:
+      - /srv/ha-stack/zigbee2mqtt/data:/app/data
+      - /run/udev:/run/udev:ro
+    ports:
+      - "127.0.0.1:8099:8080"
+    privileged: true
     networks:
       - ha-network
 

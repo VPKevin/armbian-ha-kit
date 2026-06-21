@@ -22,6 +22,8 @@ source "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/ha.sh"
 # shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/zigbee.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/compose.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/caddy.sh"
@@ -87,7 +89,7 @@ write_file_if_missing() {
 }
 
 ensure_dirs() {
-  mkdir -p "$STACK_DIR"/{config,postgres,backup,caddy/data,caddy/config,scripts,systemd}
+  mkdir -p "$STACK_DIR"/{config,postgres,backup,caddy/data,caddy/config,zigbee2mqtt/data,mosquitto/config,mosquitto/data,mosquitto/log,scripts,systemd}
   mkdir -p "$RESTIC_DIR"
   chmod 700 "$STACK_DIR" || true
 }
@@ -223,15 +225,28 @@ HAS_EXTERNAL_PROXY=0
 # Caddy ne doit être activé que si la machine peut utiliser les ports 80/443.
 ENABLE_CADDY=1
 ENABLE_UPNP=0
+ZIGBEE_MODE=none
+ZIGBEE_SERIAL_PORT=/dev/ttyUSB0
+HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null
 EOF
     chmod 600 "$ENV_FILE"
   fi
+
+  env_has_key "ZIGBEE_MODE" "$ENV_FILE" || env_set_kv "ZIGBEE_MODE" "none" "$ENV_FILE"
+  env_has_key "ZIGBEE_SERIAL_PORT" "$ENV_FILE" || env_set_kv "ZIGBEE_SERIAL_PORT" "/dev/ttyUSB0" "$ENV_FILE"
+  env_has_key "HOMEASSISTANT_ZIGBEE_DEVICE" "$ENV_FILE" || env_set_kv "HOMEASSISTANT_ZIGBEE_DEVICE" "/dev/null" "$ENV_FILE"
 
   # Complète .env depuis le compose choisi (si des variables sont manquantes)
   env_ensure_from_compose "$COMPOSE_PATH" || return $?
 
   # Charge les variables dans l’environnement du script
   load_env_file "$ENV_FILE"
+
+  sync_zigbee_env "$(zigbee_mode_get)" "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+
+  if [[ "$(zigbee_mode_get)" == "zigbee2mqtt" ]]; then
+    prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+  fi
   return "$RC_OK"
 }
 
@@ -258,6 +273,12 @@ show_summary_and_edit() {
   if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
     usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
   fi
+
+  local zigbee_mode zigbee_status
+  zigbee_mode="$(zigbee_mode_get)"
+  zigbee_status="$(zigbee_mode_label "$zigbee_mode")"
+  local zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+  local zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
 
   local env_preview="  (fichier absent)"
   if [[ -f "$ENV_FILE" ]]; then
@@ -293,6 +314,12 @@ ${repos_lines}
 Backups
   - NAS SMB creds : ${samba_status}
   - USB (physique): ${usb_status}
+
+Zigbee
+  - mode              : ${zigbee_status}
+  - dongle            : ${zigbee_dongle}
+  - exposé à HA       : ${zigbee_ha_device}
+$(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then printf '%s\n' '  - UI locale         : http://127.0.0.1:8099'; fi)
 EOF
 )
 
@@ -337,6 +364,7 @@ EOF
           if edit_action="$(whi_menu "Configuration" "Que veux-tu modifier ?" 20 92 12 \
             "edit-compose" "Changer le docker-compose utilisé" \
             "edit-env" "Compléter / modifier le .env (variables compose)" \
+            "zigbee" "Configurer / reconfigurer Zigbee (ZHA / Zigbee2MQTT)" \
             "caddy" "Domaine + email (Caddy)" \
             "restic-pass" "Redéfinir le mot de passe Restic" \
             "nas" "Configurer / reconfigurer un NAS SMB" \
@@ -438,6 +466,9 @@ EOF
 
               configure_homeassistant_yaml
               ;;
+            zigbee)
+              prompt_zigbee_mode || true
+              ;;
             caddy)
               prompt_caddy_domain || true
               ;;
@@ -475,6 +506,11 @@ EOF
           if grep -qs "^[[:space:]]*UUID=.*[[:space:]]\+/mnt/usbbackup\b" /etc/fstab 2>/dev/null; then
             usb_status="oui: /mnt/usbbackup (voir /etc/fstab)"
           fi
+
+          zigbee_mode="$(zigbee_mode_get)"
+          zigbee_status="$(zigbee_mode_label "$zigbee_mode")"
+          zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+          zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
         done
         ;;
     esac
@@ -486,6 +522,7 @@ run_install_wizard() {
     step_choose_compose
     step_setup_env
     step_features
+    step_zigbee
     step_caddy
     step_systemd
     step_restic
@@ -543,6 +580,11 @@ step_setup_env() {
 
 step_features() {
   prompt_features || return $?
+  return "$UI_OK"
+}
+
+step_zigbee() {
+  prompt_zigbee_mode || return $?
   return "$UI_OK"
 }
 

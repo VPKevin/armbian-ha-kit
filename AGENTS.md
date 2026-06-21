@@ -34,6 +34,11 @@ Services principaux :
 - **caddy** : `caddy:2`
     - reverse proxy HTTPS, certificats Let's Encrypt automatiques
     - publie `80` et `443`
+- **Optionnel Zigbee2MQTT** :
+    - **mqtt** : `eclipse-mosquitto:2`
+    - **zigbee2mqtt** : `ghcr.io/koenkk/zigbee2mqtt:latest`
+    - broker MQTT exposé uniquement en local (`127.0.0.1:1883`)
+    - UI Zigbee2MQTT exposée uniquement en local (`127.0.0.1:8099`)
 
 Sauvegardes (sur l'hôte) :
 - Dump PostgreSQL via `pg_dump` (dans `/srv/ha-stack/backup/`)
@@ -61,14 +66,20 @@ Restauration (recommandée) :
     - daily 7 / weekly 10
 - Restauration "portable" via dump SQL (pas de restore binaire du datadir Postgres)
 - Secrets jamais écrits en clair dans le repo, seulement sur la machine (root-only)
+- Si Zigbee2MQTT est choisi, la config persistée doit rester sous `/srv/ha-stack/zigbee2mqtt` et `/srv/ha-stack/mosquitto`
 
 ---
 
 ## Points sensibles
 
 - `homeassistant` est en `network_mode: host`, donc le proxy (Caddy) en bridge parle à `127.0.0.1:8123`.
+- Si `zigbee2mqtt` est activé, `homeassistant` (host network) doit joindre MQTT via `127.0.0.1:1883`, pas via le nom Docker `mqtt`.
 - `trusted_proxies` doit être en mode **strict** :
     - détecter subnet du bridge docker via `docker network inspect bridge`
+- Le wizard doit demander explicitement si l'utilisateur veut du Zigbee, puis s'il préfère **ZHA** ou **Zigbee2MQTT**.
+- Le wizard doit lister les dongles détectés et permettre un fallback manuel.
+- Si Zigbee2MQTT est choisi, demander/sélectionner le dongle série (`/dev/serial/by-id/...` de préférence) et ne pas écraser une config utilisateur non gérée.
+- Si ZHA est choisi, exposer le dongle sélectionné au conteneur `homeassistant`.
 - SMB credentials :
     - stocker dans `/etc/samba/creds-ha-nas` chmod 600
     - fstab doit être idempotent (ne pas dupliquer les lignes)

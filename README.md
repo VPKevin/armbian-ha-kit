@@ -1,4 +1,4 @@
-# HA Stack (Armbian) — Home Assistant + PostgreSQL + Caddy + Backups + UPnP
+# HA Stack (Armbian) — Home Assistant + PostgreSQL + Caddy + Backups + UPnP + Zigbee
 
 A reproducible, migratable Home Assistant installation for ARM boards running **Armbian**, using Docker.
 
@@ -92,6 +92,8 @@ sudo bash /srv/ha-stack/scripts/install.sh
 
 The wizard:
 - Generates `.env` (passwords, domain, ACME email)
+- Lets you choose whether to use Zigbee, and whether to stay on ZHA or enable Zigbee2MQTT
+- Lists detected Zigbee dongles and lets you select the one to use (with manual fallback)
 - Configures optional NAS (SMB) and/or USB backup targets
 - Initialises restic on configured targets
 - Offers restore from an existing restic backup
@@ -99,6 +101,16 @@ The wizard:
 - Configures `configuration.yaml` (Postgres recorder + strict `trusted_proxies`)
 - Starts the Docker stack
 - Installs the systemd backup timer
+
+If you choose `Zigbee2MQTT`, the installer also:
+- adds a local `mqtt` broker container (`eclipse-mosquitto:2`)
+- adds a `zigbee2mqtt` container
+- persists their data under `/srv/ha-stack/mosquitto/` and `/srv/ha-stack/zigbee2mqtt/`
+- publishes MQTT only on `127.0.0.1:1883`
+- publishes the Zigbee2MQTT web UI only on `127.0.0.1:8099`
+
+If you choose `ZHA`, Home Assistant remains the only Zigbee-aware container. The stack mounts `/run/udev` to improve USB radio detection from inside Home Assistant.
+The selected dongle is also exposed directly to `homeassistant` in that mode.
 
 ---
 

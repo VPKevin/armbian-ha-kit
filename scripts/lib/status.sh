@@ -87,14 +87,23 @@ compose_ps_compact() {
   local services=(postgres homeassistant)
 
   local enable_caddy="${ENABLE_CADDY:-}"
+  local zigbee_mode="${ZIGBEE_MODE:-}"
   if [[ -z "${enable_caddy:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
     enable_caddy="$(env_get "ENABLE_CADDY" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "${zigbee_mode:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    zigbee_mode="$(env_get "ZIGBEE_MODE" "$ENV_FILE" 2>/dev/null || true)"
   fi
   if [[ "${enable_caddy:-0}" == "1" || "${enable_caddy:-}" == "true" ]]; then
     services=(caddy postgres homeassistant)
   elif docker inspect ha-caddy >/dev/null 2>&1; then
     # fallback: si le conteneur existe, on l'inclut.
     services=(caddy postgres homeassistant)
+  fi
+  if [[ "${zigbee_mode:-none}" == "zigbee2mqtt" ]]; then
+    services+=(mqtt zigbee2mqtt)
+  elif docker inspect ha-mqtt >/dev/null 2>&1 || docker inspect ha-zigbee2mqtt >/dev/null 2>&1; then
+    services+=(mqtt zigbee2mqtt)
   fi
 
   {
@@ -109,6 +118,8 @@ compose_ps_compact() {
           postgres) name="ha-postgres" ;;
           homeassistant) name="homeassistant" ;;
           caddy) name="ha-caddy" ;;
+          mqtt) name="ha-mqtt" ;;
+          zigbee2mqtt) name="ha-zigbee2mqtt" ;;
           *) name="$svc" ;;
         esac
       fi
