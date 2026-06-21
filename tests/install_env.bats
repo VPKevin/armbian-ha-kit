@@ -262,6 +262,8 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F '  adapter: zstack' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
   [ "$status" -eq 0 ]
+  run grep -F '  baudrate: 115200' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
   run grep -F 'version: 5' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F 'pan_id: 4848' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"

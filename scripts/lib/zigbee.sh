@@ -298,6 +298,7 @@ zigbee_upsert_z2m_serial_config() {
 serial:
   port: ${serial_port}
 $(if [[ "$adapter" != "none" ]]; then printf '  adapter: %s\n' "$adapter"; fi)
+$(if [[ "$adapter" == "zstack" ]]; then printf '  baudrate: 115200\n'; fi)
 EOF
 
   tmp="$(mktemp)"
@@ -492,6 +493,7 @@ prompt_zigbee_mode() {
     return 0
   done
 }
+
 
 
 
