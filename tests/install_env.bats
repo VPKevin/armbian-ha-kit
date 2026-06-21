@@ -172,9 +172,13 @@ EOF
 
   run grep -E '^ZIGBEE_MODE=none$' "$ENV_FILE"
   [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_DEVICE_PATH=/dev/ttyUSB0$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
   run grep -E '^ZIGBEE_SERIAL_PORT=/dev/ttyUSB0$' "$ENV_FILE"
   [ "$status" -eq 0 ]
   run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_ADAPTER=none$' "$ENV_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -188,9 +192,13 @@ EOF
 
   run grep -E '^ZIGBEE_MODE=zha$' "$ENV_FILE"
   [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_DEVICE_PATH=/dev/serial/by-id/usb-test-zigbee$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
   run grep -E '^ZIGBEE_SERIAL_PORT=/dev/serial/by-id/usb-test-zigbee$' "$ENV_FILE"
   [ "$status" -eq 0 ]
   run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/serial/by-id/usb-test-zigbee$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_ADAPTER=none$' "$ENV_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -199,17 +207,19 @@ EOF
 
   : >"$ENV_FILE"
 
-  run sync_zigbee_env "zigbee2mqtt" "/dev/ttyACM0"
+  run sync_zigbee_env "zigbee2mqtt" "/dev/ttyACM0" "ember"
   [ "$status" -eq 0 ]
 
   run grep -E '^HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null$' "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  run grep -E '^ZIGBEE_ADAPTER=ember$' "$ENV_FILE"
   [ "$status" -eq 0 ]
 }
 
 @test "prepare_zigbee2mqtt_stack génère les fichiers persistants gérés" {
   test_install_sh_loaded
 
-  run prepare_zigbee2mqtt_stack "/dev/ttyACM0"
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
   [ "$status" -eq 0 ]
 
   run grep -F 'listener 1883 0.0.0.0' "$STACK_DIR/mosquitto/config/mosquitto.conf"
@@ -217,6 +227,8 @@ EOF
   run grep -F 'server: mqtt://mqtt:1883' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F 'port: /dev/ttyACM0' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'adapter: ember' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
   [ "$status" -eq 0 ]
 }
 

@@ -79,6 +79,7 @@ Restauration (recommandée) :
 - Le wizard doit demander explicitement si l'utilisateur veut du Zigbee, puis s'il préfère **ZHA** ou **Zigbee2MQTT**.
 - Le wizard doit lister les dongles détectés et permettre un fallback manuel.
 - Si Zigbee2MQTT est choisi, demander/sélectionner le dongle série (`/dev/serial/by-id/...` de préférence) et ne pas écraser une config utilisateur non gérée.
+- Si Zigbee2MQTT est choisi, demander aussi la famille d'adaptateur (`zstack`, `ember`, `deconz`) pour renseigner explicitement `serial.adapter`.
 - Si ZHA est choisi, exposer le dongle sélectionné au conteneur `homeassistant`.
 - SMB credentials :
     - stocker dans `/etc/samba/creds-ha-nas` chmod 600

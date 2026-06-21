@@ -28,6 +28,88 @@ zigbee_mode_label() {
   esac
 }
 
+zigbee_adapter_normalize() {
+  case "${1:-}" in
+    zstack|ember|deconz|none)
+      printf '%s' "${1:-none}"
+      ;;
+    ezsp)
+      printf '%s' "ember"
+      ;;
+    "")
+      printf '%s' "none"
+      ;;
+    *)
+      printf '%s' "none"
+      ;;
+  esac
+}
+
+zigbee_adapter_label() {
+  case "$1" in
+    zstack) echo "zstack" ;;
+    ember) echo "ember" ;;
+    deconz) echo "deconz" ;;
+    *) echo "non défini" ;;
+  esac
+}
+
+zigbee_selected_port_get() {
+  local selected="${ZIGBEE_DEVICE_PATH:-}"
+
+  if [[ -z "${selected:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    selected="$(env_get "ZIGBEE_DEVICE_PATH" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${selected:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    selected="$(env_get "ZIGBEE_SERIAL_PORT" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  zigbee_default_serial_port "$selected"
+}
+
+zigbee_resolve_serial_port() {
+  local selected_port="$(zigbee_default_serial_port "${1:-}")"
+  local resolved
+
+  resolved="$(readlink -f "$selected_port" 2>/dev/null || printf '%s' "$selected_port")"
+  if [[ -n "${resolved:-}" ]]; then
+    printf '%s' "$resolved"
+  else
+    printf '%s' "$selected_port"
+  fi
+}
+
+zigbee_adapter_get() {
+  local adapter="${ZIGBEE_ADAPTER:-}"
+
+  if [[ -z "${adapter:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    adapter="$(env_get "ZIGBEE_ADAPTER" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+
+  zigbee_adapter_normalize "$adapter"
+}
+
+zigbee_infer_adapter_from_port() {
+  local hint
+  hint="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+  case "$hint" in
+    *conbee*|*raspbee*)
+      printf '%s' "deconz"
+      ;;
+    *skyconnect*|*zbdongle-e*|*dongle_plus_v2*|*efr32*|*ezsp*|*ember*|*nabu_casa*)
+      printf '%s' "ember"
+      ;;
+    *zbdongle-p*|*cc2652*|*slaesh*|*sonoff*plus*|*sonoff*cc2652*)
+      printf '%s' "zstack"
+      ;;
+    *)
+      printf '%s' "zstack"
+      ;;
+  esac
+}
+
 zigbee_list_serial_candidates() {
   local dev resolved
   local seen=$'\n'
@@ -136,6 +218,21 @@ zigbee_choose_serial_port() {
   printf '%s' "$selected"
 }
 
+zigbee_choose_adapter() {
+  local title="$1"
+  local selected_port="$2"
+  local current_adapter
+  current_adapter="$(zigbee_adapter_normalize "${3:-}")"
+  if [[ "$current_adapter" == "none" ]]; then
+    current_adapter="$(zigbee_infer_adapter_from_port "$selected_port")"
+  fi
+
+  whi_menu "$title" "Choisis le type d'adaptateur Zigbee" 18 100 8 \
+    "zstack" "CC2652 / Sonoff ZBDongle-P / clés TI" \
+    "ember" "EFR32 / Sonoff ZBDongle-E / SkyConnect" \
+    "deconz" "ConBee / RaspBee"
+}
+
 zigbee_homeassistant_device_for_mode() {
   local mode="$1"
   local serial_port="$2"
@@ -149,15 +246,26 @@ zigbee_homeassistant_device_for_mode() {
 
 sync_zigbee_env() {
   local mode="$1"
-  local serial_port="${2:-}"
-  local ha_device
+  local selected_port="${2:-}"
+  local adapter="$(zigbee_adapter_normalize "${3:-}")"
+  local serial_port ha_device
 
-  serial_port="$(zigbee_default_serial_port "$serial_port")"
+  selected_port="$(zigbee_default_serial_port "$selected_port")"
+  serial_port="$(zigbee_resolve_serial_port "$selected_port")"
+
+  if [[ "$mode" != "zigbee2mqtt" ]]; then
+    adapter="none"
+  elif [[ "$adapter" == "none" ]]; then
+    adapter="$(zigbee_infer_adapter_from_port "$selected_port")"
+  fi
+
   ha_device="$(zigbee_homeassistant_device_for_mode "$mode" "$serial_port")"
 
   env_set_kv "ZIGBEE_MODE" "$mode" "$ENV_FILE"
+  env_set_kv "ZIGBEE_DEVICE_PATH" "$selected_port" "$ENV_FILE"
   env_set_kv "ZIGBEE_SERIAL_PORT" "$serial_port" "$ENV_FILE"
   env_set_kv "HOMEASSISTANT_ZIGBEE_DEVICE" "$ha_device" "$ENV_FILE"
+  env_set_kv "ZIGBEE_ADAPTER" "$adapter" "$ENV_FILE"
   load_env_file "$ENV_FILE"
 }
 
@@ -181,6 +289,7 @@ EOF
 
 zigbee_write_z2m_config() {
   local serial_port="$1"
+  local adapter="$2"
   local cfg="${STACK_DIR}/zigbee2mqtt/data/configuration.yaml"
 
   if [[ -f "$cfg" ]] && ! grep -q '^# Managed by armbian-ha-kit$' "$cfg"; then
@@ -198,6 +307,7 @@ mqtt:
   server: mqtt://mqtt:1883
 serial:
   port: ${serial_port}
+$(if [[ "$adapter" != "none" ]]; then printf '  adapter: %s\n' "$adapter"; fi)
 advanced:
   network_key: GENERATE
   pan_id: GENERATE
@@ -208,6 +318,7 @@ EOF
 
 prepare_zigbee2mqtt_stack() {
   local serial_port="$1"
+  local adapter="${2:-none}"
 
   mkdir -p \
     "${STACK_DIR}/zigbee2mqtt/data" \
@@ -216,22 +327,19 @@ prepare_zigbee2mqtt_stack() {
     "${STACK_DIR}/mosquitto/log"
 
   zigbee_write_mosquitto_config
-  zigbee_write_z2m_config "$serial_port"
+  zigbee_write_z2m_config "$serial_port" "$adapter"
 }
 
 prompt_zigbee_mode() {
-  local existing_mode existing_serial
+  local existing_mode existing_selected existing_adapter
   existing_mode="$(zigbee_mode_get)"
-  existing_serial="${ZIGBEE_SERIAL_PORT:-}"
-  if [[ -z "${existing_serial:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
-    existing_serial="$(env_get "ZIGBEE_SERIAL_PORT" "$ENV_FILE" 2>/dev/null || true)"
-  fi
-  existing_serial="$(zigbee_default_serial_port "$existing_serial")"
+  existing_selected="$(zigbee_selected_port_get)"
+  existing_adapter="$(zigbee_adapter_get)"
 
   if ! is_interactive_tty; then
-    sync_zigbee_env "$existing_mode" "$existing_serial"
+    sync_zigbee_env "$existing_mode" "$existing_selected" "$existing_adapter"
     if [[ "$existing_mode" == "zigbee2mqtt" ]]; then
-      prepare_zigbee2mqtt_stack "$existing_serial"
+      prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-$(zigbee_resolve_serial_port "$existing_selected")}" "$(zigbee_adapter_get)"
     fi
     return 0
   fi
@@ -244,11 +352,11 @@ prompt_zigbee_mode() {
     ans="$(whi_yesno_back "Zigbee" "Souhaites-tu utiliser Zigbee sur cette box ?" "$default_enable")" || return $?
 
     if [[ "$ans" == "no" ]]; then
-      sync_zigbee_env "none" "$existing_serial"
+      sync_zigbee_env "none" "$existing_selected" "none"
       return 0
     fi
 
-    local mode_choice mode_rc serial_port serial_rc
+    local mode_choice mode_rc selected_port serial_rc adapter_choice adapter_rc
     if mode_choice="$(whi_menu "Zigbee" "Quel mode Zigbee veux-tu utiliser ?" 16 90 6 \
       "zha" "Utiliser ZHA dans Home Assistant" \
       "zigbee2mqtt" "Utiliser Zigbee2MQTT + broker MQTT local")"; then
@@ -265,7 +373,7 @@ prompt_zigbee_mode() {
       esac
     fi
 
-    if serial_port="$(zigbee_choose_serial_port "Dongle Zigbee" "$existing_serial")"; then
+    if selected_port="$(zigbee_choose_serial_port "Dongle Zigbee" "$existing_selected")"; then
       :
     else
       serial_rc=$?
@@ -279,19 +387,37 @@ prompt_zigbee_mode() {
       esac
     fi
 
-    serial_port="$(sanitize_env_value "$serial_port" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-    if [[ -z "${serial_port:-}" ]]; then
+    selected_port="$(sanitize_env_value "$selected_port" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    if [[ -z "${selected_port:-}" ]]; then
       whi_info "Dongle Zigbee" "Le chemin du dongle ne peut pas être vide."
       continue
     fi
 
-    sync_zigbee_env "$mode_choice" "$serial_port"
+    adapter_choice="none"
     if [[ "$mode_choice" == "zigbee2mqtt" ]]; then
-      prepare_zigbee2mqtt_stack "$serial_port"
+      if adapter_choice="$(zigbee_choose_adapter "Type de dongle Zigbee" "$selected_port" "$existing_adapter")"; then
+        :
+      else
+        adapter_rc=$?
+        case "$adapter_rc" in
+          "$UI_BACK")
+            continue
+            ;;
+          *)
+            return "$adapter_rc"
+            ;;
+        esac
+      fi
+    fi
+
+    sync_zigbee_env "$mode_choice" "$selected_port" "$adapter_choice"
+    if [[ "$mode_choice" == "zigbee2mqtt" ]]; then
+      prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-$(zigbee_resolve_serial_port "$selected_port")}" "$(zigbee_adapter_get)"
     fi
     return 0
   done
 }
+
 
 
 

@@ -226,15 +226,19 @@ HAS_EXTERNAL_PROXY=0
 ENABLE_CADDY=1
 ENABLE_UPNP=0
 ZIGBEE_MODE=none
+ZIGBEE_DEVICE_PATH=/dev/ttyUSB0
 ZIGBEE_SERIAL_PORT=/dev/ttyUSB0
 HOMEASSISTANT_ZIGBEE_DEVICE=/dev/null
+ZIGBEE_ADAPTER=none
 EOF
     chmod 600 "$ENV_FILE"
   fi
 
   env_has_key "ZIGBEE_MODE" "$ENV_FILE" || env_set_kv "ZIGBEE_MODE" "none" "$ENV_FILE"
+  env_has_key "ZIGBEE_DEVICE_PATH" "$ENV_FILE" || env_set_kv "ZIGBEE_DEVICE_PATH" "/dev/ttyUSB0" "$ENV_FILE"
   env_has_key "ZIGBEE_SERIAL_PORT" "$ENV_FILE" || env_set_kv "ZIGBEE_SERIAL_PORT" "/dev/ttyUSB0" "$ENV_FILE"
   env_has_key "HOMEASSISTANT_ZIGBEE_DEVICE" "$ENV_FILE" || env_set_kv "HOMEASSISTANT_ZIGBEE_DEVICE" "/dev/null" "$ENV_FILE"
+  env_has_key "ZIGBEE_ADAPTER" "$ENV_FILE" || env_set_kv "ZIGBEE_ADAPTER" "none" "$ENV_FILE"
 
   # Complète .env depuis le compose choisi (si des variables sont manquantes)
   env_ensure_from_compose "$COMPOSE_PATH" || return $?
@@ -242,10 +246,10 @@ EOF
   # Charge les variables dans l’environnement du script
   load_env_file "$ENV_FILE"
 
-  sync_zigbee_env "$(zigbee_mode_get)" "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+  sync_zigbee_env "$(zigbee_mode_get)" "$(zigbee_selected_port_get)" "$(zigbee_adapter_get)"
 
   if [[ "$(zigbee_mode_get)" == "zigbee2mqtt" ]]; then
-    prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
+    prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}" "$(zigbee_adapter_get)"
   fi
   return "$RC_OK"
 }
@@ -277,8 +281,10 @@ show_summary_and_edit() {
   local zigbee_mode zigbee_status
   zigbee_mode="$(zigbee_mode_get)"
   zigbee_status="$(zigbee_mode_label "$zigbee_mode")"
+  local zigbee_selected="${ZIGBEE_DEVICE_PATH:-/dev/ttyUSB0}"
   local zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
   local zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
+  local zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
 
   local env_preview="  (fichier absent)"
   if [[ -f "$ENV_FILE" ]]; then
@@ -317,8 +323,10 @@ Backups
 
 Zigbee
   - mode              : ${zigbee_status}
-  - dongle            : ${zigbee_dongle}
+  - sélection         : ${zigbee_selected}
+  - port utilisé      : ${zigbee_dongle}
   - exposé à HA       : ${zigbee_ha_device}
+  - adaptateur Z2M    : ${zigbee_adapter}
 $(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then printf '%s\n' '  - UI locale         : http://127.0.0.1:8099'; fi)
 EOF
 )
@@ -509,8 +517,10 @@ EOF
 
           zigbee_mode="$(zigbee_mode_get)"
           zigbee_status="$(zigbee_mode_label "$zigbee_mode")"
+          zigbee_selected="${ZIGBEE_DEVICE_PATH:-/dev/ttyUSB0}"
           zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
           zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
+          zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
         done
         ;;
     esac

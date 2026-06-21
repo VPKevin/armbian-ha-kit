@@ -94,6 +94,7 @@ The wizard:
 - Generates `.env` (passwords, domain, ACME email)
 - Lets you choose whether to use Zigbee, and whether to stay on ZHA or enable Zigbee2MQTT
 - Lists detected Zigbee dongles and lets you select the one to use (with manual fallback)
+- Asks for the Zigbee adapter family when `Zigbee2MQTT` is selected (`zstack`, `ember`, `deconz`)
 - Configures optional NAS (SMB) and/or USB backup targets
 - Initialises restic on configured targets
 - Offers restore from an existing restic backup

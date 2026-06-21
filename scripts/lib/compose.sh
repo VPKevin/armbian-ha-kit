@@ -113,6 +113,11 @@ start_stack() {
     zigbee_mode="$(env_get "ZIGBEE_MODE" "$ENV_FILE" 2>/dev/null || true)"
   fi
 
+  if command -v sync_zigbee_env >/dev/null 2>&1 && command -v zigbee_selected_port_get >/dev/null 2>&1 && command -v zigbee_adapter_get >/dev/null 2>&1; then
+    sync_zigbee_env "${zigbee_mode:-none}" "$(zigbee_selected_port_get)" "$(zigbee_adapter_get 2>/dev/null || echo none)"
+    zigbee_mode="${ZIGBEE_MODE:-$zigbee_mode}"
+  fi
+
   local profiles=()
   if [[ "${enable_caddy:-1}" == "1" || "${enable_caddy:-}" == "true" ]]; then
     profiles+=("--profile" "caddy")
