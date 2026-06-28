@@ -5,18 +5,27 @@ set -euo pipefail
 
 # Contracts (P0):
 # - Fonctions: detect_docker_subnet, configure_homeassistant_yaml
-# - Entrées: variables globales: STACK_DIR, ENV_FILE, POSTGRES_* variables
-# - Sorties: écrit/initialise ${STACK_DIR}/config/configuration.yaml si absent
+# - Entrées: variables globales: STACK_DIR, ENV_FILE, DOCKER_SUBNET, POSTGRES_* variables
+# - Sorties: écrit/initialise/corrige ${STACK_DIR}/config/configuration.yaml
 # - Codes retour: 0 succès, non-zero si erreur d'écriture.
 
+# Sous-réseau du réseau applicatif (ha-network). DOIT correspondre au subnet
+# figé dans docker-compose.yml (networks.ha-network.ipam). On ne devine plus le
+# bridge Docker par défaut (172.17.x) : Caddy tourne sur ha-network, pas dessus,
+# et son IP est donc dans CE sous-réseau. La valeur vient de .env (DOCKER_SUBNET)
+# pour rester cohérente avec compose ; à défaut, on retombe sur le même défaut.
+DOCKER_SUBNET_DEFAULT="172.30.0.0/24"
+
 detect_docker_subnet() {
-  local subnet
-  subnet="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null || true)"
-  if [[ -n "$subnet" ]]; then
-    echo "$subnet"
-  else
-    echo "172.16.0.0/12"
+  if [[ -n "${DOCKER_SUBNET:-}" ]]; then
+    echo "$DOCKER_SUBNET"
+    return 0
   fi
+  local subnet=""
+  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    subnet="$(env_get "DOCKER_SUBNET" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  echo "${subnet:-$DOCKER_SUBNET_DEFAULT}"
 }
 
 build_homeassistant_trusted_lines() {
@@ -26,48 +35,105 @@ build_homeassistant_trusted_lines() {
   while IFS= read -r line; do
     [[ -z "${line:-}" ]] && continue
     trusted_lines+="${trusted_lines:+\n}    - ${line}"
-  done < <(printf '%s' "$trusted_csv" | tr ',' '\n')
+  done < <(printf '%s\n' "$trusted_csv" | tr ',' '\n')
 
   printf '%s' "$trusted_lines"
 }
 
-rewrite_homeassistant_trusted_proxies() {
-  local cfg="$1" trusted_lines="$2"
-  local tmp
+# ha_has_http_block: vrai si un bloc top-level "http:" existe.
+ha_has_http_block() {
+  grep -Eq '^http:[[:space:]]*$' "$1"
+}
 
-  [[ -f "$cfg" ]] || return 0
-  grep -q '^http:' "$cfg" || return 0
-  grep -q '^  trusted_proxies:[[:space:]]*$' "$cfg" || return 0
+# ha_has_trusted_proxies: vrai si une clé "trusted_proxies:" (indentée) existe.
+ha_has_trusted_proxies() {
+  grep -Eq '^[[:space:]]+trusted_proxies:[[:space:]]*$' "$1"
+}
 
+# ha_has_use_x_forwarded: vrai si "use_x_forwarded_for:" est déjà présent.
+ha_has_use_x_forwarded() {
+  grep -Eq '^[[:space:]]+use_x_forwarded_for:' "$1"
+}
+
+# replace_trusted_proxies_block: remplace UNIQUEMENT les lignes "    - ..."
+# situées sous "  trusted_proxies:" par la nouvelle liste. Tout le reste du
+# fichier (recorder, intégrations, automations, autres clés http) est conservé.
+replace_trusted_proxies_block() {
+  local cfg="$1" trusted_lines="$2" tmp
   tmp="$(mktemp)"
   awk -v trusted_lines="$trusted_lines" '
-    BEGIN {
-      n = split(trusted_lines, repl, /\n/)
-      replaced = 0
-      skip = 0
-    }
+    BEGIN { n = split(trusted_lines, repl, /\n/); replaced = 0; skip = 0 }
     {
       if (skip) {
-        if ($0 ~ /^    - / || $0 ~ /^[[:space:]]*$/) {
-          next
-        }
+        # On saute les anciennes entrées de liste "    - ..." (et lignes vides
+        # éventuelles intercalées), puis on rend la main au premier élément
+        # qui ne fait plus partie de la liste.
+        if ($0 ~ /^[[:space:]]+-[[:space:]]/) { next }
         skip = 0
       }
-
       print
-
-      if (!replaced && $0 ~ /^  trusted_proxies:[[:space:]]*$/) {
-        for (i = 1; i <= n; i++) {
-          print repl[i]
-        }
+      if (!replaced && $0 ~ /^[[:space:]]+trusted_proxies:[[:space:]]*$/) {
+        for (i = 1; i <= n; i++) print repl[i]
         replaced = 1
         skip = 1
       }
     }
   ' "$cfg" >"$tmp"
-
   cat "$tmp" >"$cfg"
   rm -f "$tmp"
+}
+
+# insert_trusted_proxies_under_http: le bloc "http:" existe mais sans
+# "trusted_proxies:". On insère use_x_forwarded_for (si absent) + trusted_proxies
+# juste après la ligne "http:", sans toucher au reste.
+insert_trusted_proxies_under_http() {
+  local cfg="$1" trusted_lines="$2" add_xff="$3" tmp
+  tmp="$(mktemp)"
+  awk -v trusted_lines="$trusted_lines" -v add_xff="$add_xff" '
+    BEGIN { n = split(trusted_lines, repl, /\n/); done = 0 }
+    {
+      print
+      if (!done && $0 ~ /^http:[[:space:]]*$/) {
+        if (add_xff == "1") print "  use_x_forwarded_for: true"
+        print "  trusted_proxies:"
+        for (i = 1; i <= n; i++) print repl[i]
+        done = 1
+      }
+    }
+  ' "$cfg" >"$tmp"
+  cat "$tmp" >"$cfg"
+  rm -f "$tmp"
+}
+
+# ensure_homeassistant_trusted_proxies: garantit, de façon idempotente, que le
+# bloc http/trusted_proxies reflète le sous-réseau courant — quelle que soit la
+# forme de départ du fichier — sans modifier les autres lignes.
+ensure_homeassistant_trusted_proxies() {
+  local cfg="$1" trusted_lines="$2"
+  [[ -f "$cfg" ]] || return 0
+
+  if ! ha_has_http_block "$cfg"; then
+    # Aucun bloc http : on l'ajoute en entier en fin de fichier.
+    {
+      printf '\n'
+      printf 'http:\n'
+      printf '  use_x_forwarded_for: true\n'
+      printf '  trusted_proxies:\n'
+      printf '%b\n' "$trusted_lines"
+    } >> "$cfg"
+    return 0
+  fi
+
+  if ! ha_has_trusted_proxies "$cfg"; then
+    local add_xff="1"
+    ha_has_use_x_forwarded "$cfg" && add_xff="0"
+    insert_trusted_proxies_under_http "$cfg" "$trusted_lines" "$add_xff"
+    return 0
+  fi
+
+  # trusted_proxies existe (vide ou avec d'anciennes valeurs) : on remplace
+  # uniquement sa liste.
+  replace_trusted_proxies_block "$cfg" "$trusted_lines"
 }
 
 configure_homeassistant_yaml() {
@@ -93,18 +159,16 @@ configure_homeassistant_yaml() {
 
   trusted_lines="$(build_homeassistant_trusted_lines "$subnet" "$extra_trusted")"
 
+  # 1) recorder : ajouté seulement s'il manque (ne réécrit jamais l'existant).
   if ! grep -q "^recorder:" "$cfg"; then
     cat >> "$cfg" <<EOF
 
 recorder:
   db_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
-
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-$(printf '%b' "$trusted_lines")
 EOF
-  else
-    rewrite_homeassistant_trusted_proxies "$cfg" "$trusted_lines"
   fi
+
+  # 2) http/trusted_proxies : vérifié et corrigé à chaque passage, de façon
+  #    idempotente, sans toucher au reste du fichier.
+  ensure_homeassistant_trusted_proxies "$cfg" "$trusted_lines"
 }

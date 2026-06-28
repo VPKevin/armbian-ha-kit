@@ -60,7 +60,7 @@ env_csv_normalize_for_key() {
 
     normalized+=("$item")
     seen+="$item"$'\n'
-  done < <(printf '%s' "$raw" | tr ',' '\n')
+  done < <(printf '%s\n' "$raw" | tr ',' '\n')
 
   local IFS=,
   printf '%s' "${normalized[*]}"

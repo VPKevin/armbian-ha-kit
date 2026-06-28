@@ -115,3 +115,9 @@ services:
 networks:
   ha-network:
     driver: bridge
+    # Sous-réseau FIGÉ (au lieu de laisser Docker attribuer 172.18/172.19/...).
+    # Doit rester cohérent avec DOCKER_SUBNET (.env) et detect_docker_subnet()
+    # dans scripts/lib/ha.sh, qui alimente trusted_proxies de Home Assistant.
+    ipam:
+      config:
+        - subnet: ${DOCKER_SUBNET:-172.30.0.0/24}
