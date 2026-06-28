@@ -52,6 +52,13 @@ services:
     image: caddy:2
     container_name: ha-caddy
     restart: unless-stopped
+    # Caddy ne démarre qu'une fois Home Assistant *healthy*.
+    # depends_on est de l'orchestration pure : il fonctionne même si HA est en
+    # network_mode: host et Caddy sur le bridge. Combiné au health_check côté
+    # Caddyfile, ça supprime la fenêtre de 502 au démarrage de la stack.
+    depends_on:
+      homeassistant:
+        condition: service_healthy
     env_file: .env
     ports:
       - "80:80"

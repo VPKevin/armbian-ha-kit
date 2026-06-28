@@ -10,5 +10,13 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 
-	reverse_proxy host.docker.internal:8123
+	reverse_proxy host.docker.internal:8123 {
+		# Active health checks : Caddy sonde HA et le sort de la rotation tant
+		# qu'il ne répond pas (au lieu de marteler un backend mort et de logger
+		# des "connection refused" en rafale). Dès que HA répond 200 sur /,
+		# il est remis en service automatiquement.
+		health_uri /
+		health_interval 10s
+		health_timeout 5s
+	}
 }

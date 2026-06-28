@@ -131,6 +131,20 @@ start_stack() {
     docker rm -f ha-zigbee2mqtt ha-mqtt >/dev/null 2>&1 || true
   fi
 
+  # Persiste les profils actifs dans .env (COMPOSE_PROFILES) pour que toutes
+  # les commandes `docker compose` ultérieures lancées manuellement depuis
+  # STACK_DIR (restart, up -d, down, logs...) appliquent les mêmes profils
+  # sans avoir à repasser --profile. Compose lit COMPOSE_PROFILES depuis le
+  # .env du répertoire projet.
+  local profiles_csv="" _p=""
+  for _p in "${profiles[@]}"; do
+    [[ "$_p" == "--profile" ]] && continue
+    profiles_csv+="${profiles_csv:+,}${_p}"
+  done
+  if [[ -n "${ENV_FILE:-}" ]] && command -v env_set_kv >/dev/null 2>&1; then
+    env_set_kv "COMPOSE_PROFILES" "$profiles_csv" "$ENV_FILE" || true
+  fi
+
   if command -v ui_run >/dev/null 2>&1; then
     (cd "$STACK_DIR" && ui_run "Démarrer stack" -- docker compose -f "$COMPOSE_PATH" "${profiles[@]}" up -d)
   else
