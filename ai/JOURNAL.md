@@ -71,3 +71,21 @@ Format d'entrée (obligatoire):
 
   - Ajouter job CI (GitHub Actions) pour exécuter `shellcheck`, `bats` et `tests/run-tests.sh` (buildx/smoke).
   - Étendre la documentation P0 (cas d'erreur et exécution headless) dans `README.md` si souhaité.
+
+---
+
+- Date: 2026-07-02
+- Auteur: Claude (Fable 5)
+- Type: doc
+- Impact: P0
+- Résumé court: Audit complet du projet (sécurité, bugs, fiabilité) consigné dans ai/AUDIT_2026-07-02.md + création de CLAUDE.md.
+- Détails:
+  - Lecture intégrale de bootstrap.sh, scripts/install.sh, scripts/backup.sh, scripts/lib/*.sh, docker-compose.yml, Caddyfile, systemd/*, ha-backup.sh, .env*.
+  - Nouveau fichier `ai/AUDIT_2026-07-02.md` : findings priorisés (P0/P1/P2) avec références fichier:ligne et corrections proposées. Points saillants :
+    - Bug confirmé par exécution : `env_get` (env.sh:27) retourne `KEY=value` au lieu de `value` (sub() awk avec "k" littéral) — cause des `strip_key_prefix_if_any` partout, casse les défauts de ré-installation.
+    - Bug confirmé par grep : `file_mtime` appelée (uninstall.sh:103,121) mais jamais définie — la suppression de paquets à la désinstallation ne fait jamais rien.
+    - Sécurité stack : `privileged: true` sur HA+Z2M, Mosquitto anonyme, chmod 600 manquant sur le mot de passe Restic (code mort restic.sh:123), PGPASSWORD visible dans ps + injection possible dans backup.sh, .env sourcé en root sans quoting.
+    - Fiabilité : échecs de backup silencieux (|| true) vs cascade (set -e) selon la branche, restic forget sans --tag, healthcheck Caddy suit le 301 vers le domaine, ENABLE_UPNP jamais implémenté, uninstall ne nettoie pas fstab.
+  - Nouveau fichier `CLAUDE.md` (racine) : carte du projet, conventions, pièges connus, pointeur vers l'audit et top-5 des priorités.
+- Tests: aucun code modifié — documentation uniquement. Vérifications effectuées pendant l'audit : reproduction du bug awk env_get en isolation, grep exhaustifs (file_mtime, UPNP), vérification que .env n'est pas dans l'historique git.
+- Commentaires / next steps: suivre l'ordre d'exécution recommandé en §6 de l'audit (env_get d'abord, puis privileged/MQTT, puis backup.sh). Marquer les points traités dans l'audit au fil de l'eau.
