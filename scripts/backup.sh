@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STACK_DIR="/srv/ha-stack"
+STACK_DIR="${STACK_DIR:-/srv/ha-stack}"
 ENV_FILE="${STACK_DIR}/.env"
 BACKUP_DIR="${STACK_DIR}/backup"
 LOG_TAG="[ha-backup]"

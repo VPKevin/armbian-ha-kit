@@ -39,9 +39,13 @@ timer systemd. Tout est en bash, cible = box ARM en root.
 
 ## Pièges connus (lire avant de toucher au code)
 
-- `env_get` (env.sh) retourne actuellement `KEY=value` (bug awk confirmé) —
-  c'est la raison des `strip_key_prefix_if_any` partout. Voir audit §2.1 avant
-  de "nettoyer" l'un ou l'autre.
+- `env_get` (env.sh) : bug historique corrigé le 2026-07-03 (retournait
+  `KEY=value`). Les `strip_key_prefix_if_any` restants sont CONSERVÉS exprès :
+  ils assainissent les `.env` déployés par d'anciennes versions, potentiellement
+  pollués en `KEY=KEY=value`. Ne pas les supprimer sans couvrir ce cas (test
+  bats dédié dans tests/install_env.bats).
+- Stub whiptail des tests : le vrai whiptail écrit la saisie sur STDERR (d'où
+  le swap `3>&1 1>&2 2>&3` dans ui.sh) — tout stub de test doit faire pareil.
 - Le `.env` est à la fois sourcé par bash ET parsé par docker compose : les
   deux parsers divergent sur les quotes/caractères spéciaux.
 - `wait_for_health`/`status.sh` dupliquent le mapping service→conteneur ; toute
@@ -57,10 +61,14 @@ corrections proposées et **ordre d'exécution recommandé en §6**. C'est le
 backlog de référence : le consulter avant d'entreprendre des corrections, et y
 marquer les points traités.
 
-Résumé des priorités au 2026-07-02 :
-1. Bug `env_get` (audit §2.1) — corriger l'awk puis retirer les workarounds.
-2. Retirer `privileged: true` des conteneurs HA/Z2M ; authentifier Mosquitto
-   (⚠ cassant pour les stacks existantes — suivre le plan de migration, audit §1.2).
+Résumé des priorités (maj 2026-07-03) :
+1. ✅ FAIT — Bug `env_get` (audit §2.1) : awk corrigé, strips conservés en
+   nettoyage défensif, 5 tests bats ajoutés, suite 19/19 verte.
+2. ✅ FAIT — `privileged` retiré (devices: suffit, images en root) ; auth MQTT
+   implémentée avec le cycle de vie complet (fresh=on par défaut, migration
+   explicite défaut=non, rotation via menu status). Clés .env : MQTT_AUTH,
+   MQTT_USER, MQTT_PASSWORD. Une conf mosquitto sans le marqueur
+   "# Managed by armbian-ha-kit" n'est JAMAIS touchée.
 3. Fiabiliser `backup.sh` (échecs silencieux, PGPASSWORD dans `ps`, chmod du
    mot de passe Restic manquant — code mort ligne restic.sh:123).
 4. `file_mtime` jamais défini (uninstall ne supprime jamais les paquets) ;

@@ -27,7 +27,9 @@ services:
     container_name: homeassistant
     restart: unless-stopped
     network_mode: host
-    privileged: true
+    # Pas de "privileged": l'accès au dongle Zigbee (mode ZHA uniquement) passe
+    # par le mapping "devices:" ci-dessous — suffisant car l'image HA tourne en
+    # root. En mode Zigbee2MQTT, HA n'a aucun accès matériel (/dev/null).
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,7 +110,8 @@ services:
       - /run/udev:/run/udev:ro
     ports:
       - "127.0.0.1:8099:8080"
-    privileged: true
+    # Pas de "privileged": le mapping "devices:" suffit (l'image Z2M tourne en
+    # root, donc pas besoin de group_add dialout non plus).
     networks:
       - ha-network
 

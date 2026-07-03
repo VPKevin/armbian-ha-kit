@@ -24,7 +24,11 @@ set -euo pipefail
 req_bin() { command -v "$1" >/dev/null 2>&1; }
 
 is_interactive_tty() {
-  [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
+  [[ -t 0 && -t 1 ]] && return 0
+  # /dev/tty peut exister sans être utilisable (container/cron sans terminal
+  # de contrôle) : -r/-w ne testent que les permissions, il faut réellement
+  # tenter l'ouverture en lecture/écriture.
+  { : </dev/tty >/dev/tty; } 2>/dev/null
 }
 
 # Répertoire d'état persistant (suivi des paquets installés par le kit).

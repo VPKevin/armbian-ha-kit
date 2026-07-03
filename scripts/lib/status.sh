@@ -167,6 +167,7 @@ status_wizard() {
       "view" "Afficher le status" \
       "backup" "Configurer / modifier les sauvegardes (NAS/USB, Restic, timer)" \
       "caddy" "Configurer Caddy (domaine/email)" \
+      "mqtt" "Afficher / régénérer les identifiants MQTT" \
       "quit" "Retour")"; then
       :
     else
@@ -195,6 +196,32 @@ status_wizard() {
         export STACK_DIR="$stack_dir"
         export ENV_FILE="$env_file"
         prompt_caddy_domain || true
+        ;;
+      mqtt)
+        if [[ -f "${stack_dir}/scripts/lib/zigbee.sh" ]]; then
+          # shellcheck source=/dev/null
+          source "${stack_dir}/scripts/lib/zigbee.sh" || true
+        fi
+        export STACK_DIR="$stack_dir"
+        export ENV_FILE="$env_file"
+
+        if [[ "$(mqtt_auth_state_get)" != "1" ]]; then
+          whi_info "MQTT" "L'authentification MQTT est désactivée (connexions anonymes).\n\nPour l'activer : menu Installer > Zigbee (mode Zigbee2MQTT)."
+          continue
+        fi
+
+        mqtt_show_credentials_info || true
+
+        local ans
+        ans="$(whi_yesno_back "MQTT" "Régénérer le mot de passe MQTT maintenant ?\n\nATTENTION : Zigbee2MQTT sera resynchronisé automatiquement, mais il faudra remettre à jour l'intégration MQTT dans Home Assistant, sinon Zigbee y sera indisponible." "no")" || true
+        if [[ "${ans:-}" == "yes" ]]; then
+          env_set_kv "MQTT_PASSWORD" "$(mqtt_generate_password)" "$ENV_FILE"
+          # Recharge puis ré-applique l'état (passwd file + conf + creds Z2M).
+          load_env_file "$ENV_FILE"
+          prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}" "$(zigbee_adapter_get 2>/dev/null || echo none)"
+          docker restart ha-mqtt ha-zigbee2mqtt >/dev/null 2>&1 || true
+          mqtt_show_credentials_info || true
+        fi
         ;;
       backup)
         # On charge les libs si pas déjà chargées (status.sh est sourcé par install.sh, mais peut être utilisé isolément).

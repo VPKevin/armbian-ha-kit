@@ -26,12 +26,21 @@ printf '%s\n' "whiptail $*" >>"${WHIPTAIL_LOG}"
 
 case "$*" in
   *--inputbox*)
-    # Dernier argument = valeur par défaut
-    echo "${@: -1}"
+    # whiptail écrit la valeur saisie sur STDERR (d'où le swap 3>&1 1>&2 2>&3
+    # dans ui.sh). Le stub doit faire pareil pour être capturé par whi_input.
+    # La valeur par défaut est le 4e argument après --inputbox
+    # (--inputbox <prompt> <h> <w> <default>).
+    args=("$@")
+    for i in "${!args[@]}"; do
+      if [[ "${args[$i]}" == "--inputbox" ]]; then
+        echo "${args[$((i + 4))]:-}" >&2
+        break
+      fi
+    done
     exit 0
     ;;
   *--passwordbox*)
-    echo "secret"
+    echo "secret" >&2
     exit 0
     ;;
   *--yesno*)
@@ -81,6 +90,70 @@ test_install_sh_loaded() {
   export COMPOSE_PATH="$DEFAULT_COMPOSE_PATH"
 
   mkdir -p "$STACK_DIR"
+}
+
+@test "env_get retourne la valeur seule, sans le préfixe KEY=" {
+  test_install_sh_loaded
+
+  printf 'FOO=bar\nENABLE_CADDY=0\n' >"$ENV_FILE"
+
+  run env_get "ENABLE_CADDY" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run env_get "FOO" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "bar" ]
+}
+
+@test "env_get préserve les '=' contenus dans la valeur" {
+  test_install_sh_loaded
+
+  printf 'DB_URL=postgresql://u:p=x@host/db?sslmode=disable\n' >"$ENV_FILE"
+
+  run env_get "DB_URL" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "postgresql://u:p=x@host/db?sslmode=disable" ]
+}
+
+@test "env_get tolère les espaces de tête et retourne 1 si clé absente" {
+  test_install_sh_loaded
+
+  printf '  FOO=bar\n' >"$ENV_FILE"
+
+  run env_get "FOO" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "bar" ]
+
+  run env_get "MISSING" "$ENV_FILE"
+  [ "$status" -eq 1 ]
+}
+
+@test "env_get ne matche pas une clé préfixe d'une autre clé" {
+  test_install_sh_loaded
+
+  printf 'POSTGRES_USER_EXTRA=x\nPOSTGRES_USER=ha\n' >"$ENV_FILE"
+
+  run env_get "POSTGRES_USER" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha" ]
+}
+
+@test "env_get + strip_key_prefix_if_any nettoient une valeur héritée polluée KEY=KEY=value" {
+  test_install_sh_loaded
+
+  # D'anciennes versions (bug env_get pré-correctif) ont pu écrire des valeurs
+  # polluées dans des .env déployés : le strip côté appelant doit rester
+  # opérationnel pour les assainir.
+  printf 'HA_DOMAIN=HA_DOMAIN=ha.example.com\n' >"$ENV_FILE"
+
+  run env_get "HA_DOMAIN" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "HA_DOMAIN=ha.example.com" ]
+
+  run strip_key_prefix_if_any "HA_DOMAIN" "HA_DOMAIN=ha.example.com"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha.example.com" ]
 }
 
 @test "env_set_kv ajoute une clé sans supprimer les autres" {
@@ -270,6 +343,123 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "prepare_zigbee2mqtt_stack active l'auth MQTT par défaut sur une installation neuve" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'allow_anonymous false' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file /mosquitto/config/passwd' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+
+  run env_get "MQTT_AUTH" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+  run env_get "MQTT_USER" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha" ]
+  run env_get "MQTT_PASSWORD" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+
+  run grep -E "^  user: 'ha'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -E "^  password: '.+'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack n'active PAS l'auth sur une stack héritée sans auth (migration explicite)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/mosquitto/config"
+  cat >"$STACK_DIR/mosquitto/config/mosquitto.conf" <<'EOF'
+# Managed by armbian-ha-kit
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
+listener 1883 0.0.0.0
+allow_anonymous true
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'allow_anonymous true' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -ne 0 ]
+
+  run env_get "MQTT_AUTH" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run grep -E "^  (user|password):" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack respecte des credentials MQTT existants sans les régénérer (idempotent)" {
+  test_install_sh_loaded
+
+  printf 'MQTT_AUTH=1\nMQTT_USER=bob\nMQTT_PASSWORD=s3cret\n' >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/zigbee2mqtt/data"
+  cat >"$STACK_DIR/zigbee2mqtt/data/configuration.yaml" <<'EOF'
+homeassistant:
+  enabled: true
+mqtt:
+  server: mqtt://mqtt:1883
+  base_topic: custom_z2m
+serial:
+  port: /dev/ttyACM0
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+  # Deuxième passage pour vérifier l'idempotence (pas de doublons)
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run env_get "MQTT_PASSWORD" "$ENV_FILE"
+  [ "$output" = "s3cret" ]
+
+  run grep -c "^  user: 'bob'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$output" = "1" ]
+  run grep -c "^  password: 's3cret'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$output" = "1" ]
+  # Les autres clés du bloc mqtt sont préservées
+  run grep -F 'base_topic: custom_z2m' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'server: mqtt://mqtt:1883' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack ne touche jamais une conf mosquitto non gérée par le kit" {
+  test_install_sh_loaded
+
+  printf 'MQTT_AUTH=1\n' >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/mosquitto/config"
+  cat >"$STACK_DIR/mosquitto/config/mosquitto.conf" <<'EOF'
+# Config perso de l'utilisateur
+listener 1883
+allow_anonymous true
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F '# Config perso de l'"'"'utilisateur' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -ne 0 ]
+  # Et on n'injecte pas de creds dans Z2M (le kit ne gère pas ce broker)
+  run grep -E "^  (user|password):" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
 @test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
   test_install_sh_loaded
 
@@ -287,7 +477,8 @@ EOF
   run configure_homeassistant_yaml
   [ "$status" -eq 0 ]
 
-  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  # Subnet applicatif figé (DOCKER_SUBNET, défaut 172.30.0.0/24) — cf. ha.sh.
+  run grep -F '    - 172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
@@ -316,7 +507,8 @@ EOF
   run configure_homeassistant_yaml
   [ "$status" -eq 0 ]
 
-  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  # Subnet applicatif figé (DOCKER_SUBNET, défaut 172.30.0.0/24) — cf. ha.sh.
+  run grep -F '    - 172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]

@@ -269,14 +269,114 @@ sync_zigbee_env() {
   load_env_file "$ENV_FILE"
 }
 
-zigbee_write_mosquitto_config() {
-  local cfg="${STACK_DIR}/mosquitto/config/mosquitto.conf"
+# ----------------------
+# MQTT (Mosquitto) : authentification
+# ----------------------
+# Cycle de vie (cf. ai/AUDIT_2026-07-02.md §1.2) :
+# - Install neuve (pas de mosquitto.conf) : auth activée par défaut.
+# - Stack existante sans auth : migration EXPLICITE via prompt (défaut: non),
+#   car l'intégration MQTT côté HA (config UI) doit être mise à jour à la main.
+# - Auth déjà active + credentials connus : idempotent, aucun changement.
+# Jamais de rotation silencieuse d'un secret existant.
 
-  if [[ -f "$cfg" ]] && ! grep -q '^# Managed by armbian-ha-kit$' "$cfg"; then
+mqtt_conf_path() { echo "${STACK_DIR}/mosquitto/config/mosquitto.conf"; }
+mqtt_passwd_path() { echo "${STACK_DIR}/mosquitto/config/passwd"; }
+
+# Conf non gérée par le kit (pas de marqueur) => on ne touche à rien.
+mqtt_conf_is_unmanaged() {
+  local cfg
+  cfg="$(mqtt_conf_path)"
+  [[ -f "$cfg" ]] && ! grep -q '^# Managed by armbian-ha-kit$' "$cfg"
+}
+
+# stdout: "1" ou "0" — état voulu de l'authentification MQTT.
+# Ordre: variable/clé MQTT_AUTH si définie ; sinon défaut = 1 sur install
+# neuve (pas encore de mosquitto.conf), 0 sur stack existante (migration
+# explicite requise, cf. plan §1.2).
+mqtt_auth_state_get() {
+  local v="${MQTT_AUTH:-}"
+  if [[ -z "${v:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    v="$(env_get "MQTT_AUTH" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  case "${v:-}" in
+    1|true) echo "1"; return 0 ;;
+    0|false) echo "0"; return 0 ;;
+  esac
+  if [[ -f "$(mqtt_conf_path)" ]]; then
+    echo "0"
+  else
+    echo "1"
+  fi
+}
+
+mqtt_generate_password() {
+  head -c 24 /dev/urandom | base64 | tr -d '=+/\n' | head -c 24
+}
+
+# Garantit MQTT_USER/MQTT_PASSWORD dans .env (génère si absents) et les
+# exporte. Ne régénère JAMAIS une valeur existante.
+mqtt_ensure_creds_env() {
+  local user pass
+  user="$(env_get "MQTT_USER" "$ENV_FILE" 2>/dev/null || true)"
+  pass="$(env_get "MQTT_PASSWORD" "$ENV_FILE" 2>/dev/null || true)"
+  user="$(strip_key_prefix_if_any "MQTT_USER" "${user:-}")"
+  pass="$(strip_key_prefix_if_any "MQTT_PASSWORD" "${pass:-}")"
+  [[ -n "${user:-}" ]] || user="ha"
+  [[ -n "${pass:-}" ]] || pass="$(mqtt_generate_password)"
+  env_set_kv "MQTT_USER" "$user" "$ENV_FILE"
+  env_set_kv "MQTT_PASSWORD" "$pass" "$ENV_FILE"
+  export MQTT_USER="$user" MQTT_PASSWORD="$pass"
+}
+
+# (Ré)génère le fichier passwd Mosquitto (hashes) via l'image eclipse-mosquitto
+# (mosquitto_passwd n'existe pas sur l'hôte sans installer le broker Debian).
+# Écrit dans un fichier temporaire puis bascule, pour ne jamais laisser un
+# passwd absent/corrompu si docker échoue.
+mqtt_write_passwd_file() {
+  local user="$1" pass="$2"
+  local conf_dir="${STACK_DIR}/mosquitto/config"
+  mkdir -p "$conf_dir"
+
+  if ! req_bin docker; then
+    log_warn "docker absent: fichier passwd Mosquitto non généré (retenté au prochain passage)."
+    return 1
+  fi
+
+  rm -f "$conf_dir/passwd.new"
+  if ! docker run --rm -v "$conf_dir:/mconf" --entrypoint mosquitto_passwd \
+      eclipse-mosquitto:2 -c -b /mconf/passwd.new "$user" "$pass" 2>/tmp/ha-mqtt-passwd.err; then
+    log_warn "mosquitto_passwd a échoué: $(tail -n 3 /tmp/ha-mqtt-passwd.err 2>/dev/null | tr '\n' ' ' || true)"
+    rm -f "$conf_dir/passwd.new"
+    return 1
+  fi
+
+  mv -f "$conf_dir/passwd.new" "$conf_dir/passwd" 2>/dev/null || return 1
+  # Lisible par l'utilisateur mosquitto (uid 1883) après le drop de privilèges.
+  chown 1883:1883 "$conf_dir/passwd" 2>/dev/null || true
+  chmod 600 "$conf_dir/passwd" 2>/dev/null || true
+}
+
+zigbee_write_mosquitto_config() {
+  local auth="${1:-0}"
+  local cfg
+  cfg="$(mqtt_conf_path)"
+
+  if mqtt_conf_is_unmanaged; then
     return 0
   fi
 
-  cat >"$cfg" <<'EOF'
+  if [[ "$auth" == "1" ]]; then
+    cat >"$cfg" <<'EOF'
+# Managed by armbian-ha-kit
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
+listener 1883 0.0.0.0
+allow_anonymous false
+password_file /mosquitto/config/passwd
+EOF
+  else
+    cat >"$cfg" <<'EOF'
 # Managed by armbian-ha-kit
 persistence true
 persistence_location /mosquitto/data/
@@ -284,7 +384,114 @@ log_dest stdout
 listener 1883 0.0.0.0
 allow_anonymous true
 EOF
+  fi
   chmod 600 "$cfg" || true
+}
+
+# Upsert des clés user/password sous le bloc "mqtt:" de la config Z2M, en
+# préservant les autres clés du bloc (server, base_topic, ...). user vide =>
+# suppression des deux clés (auth désactivée).
+zigbee_upsert_z2m_mqtt_credentials() {
+  local cfg="$1" user="${2:-}" pass="${3:-}"
+  [[ -f "$cfg" ]] || return 0
+
+  # Échappement YAML single-quote ( ' -> '' )
+  local u_esc="${user//\'/\'\'}"
+  local p_esc="${pass//\'/\'\'}"
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -v user="$u_esc" -v pass="$p_esc" '
+    BEGIN { q = sprintf("%c", 39); in_mqtt = 0; saw_mqtt = 0 }
+
+    function print_creds() {
+      if (user != "") {
+        print "  user: " q user q
+        print "  password: " q pass q
+      }
+    }
+
+    /^mqtt:[[:space:]]*$/ {
+      print
+      print_creds()
+      in_mqtt = 1
+      saw_mqtt = 1
+      next
+    }
+
+    in_mqtt && /^[^[:space:]]/ { in_mqtt = 0 }
+    in_mqtt && /^[[:space:]]+(user|password):/ { next }
+
+    { print }
+
+    END {
+      if (!saw_mqtt && user != "") {
+        print "mqtt:"
+        print "  server: mqtt://mqtt:1883"
+        print_creds()
+      }
+    }
+  ' "$cfg" >"$tmp"
+  cat "$tmp" >"$cfg"
+  rm -f "$tmp"
+  chmod 600 "$cfg" || true
+}
+
+# Boîte d'information avec les identifiants à reporter dans l'intégration MQTT
+# de Home Assistant (le kit ne peut pas modifier la config UI de HA).
+mqtt_show_credentials_info() {
+  [[ "$(mqtt_auth_state_get)" == "1" ]] || return 0
+  local user pass
+  user="$(strip_key_prefix_if_any "MQTT_USER" "$(env_get "MQTT_USER" "$ENV_FILE" 2>/dev/null || true)")"
+  pass="$(strip_key_prefix_if_any "MQTT_PASSWORD" "$(env_get "MQTT_PASSWORD" "$ENV_FILE" 2>/dev/null || true)")"
+  [[ -n "${user:-}" && -n "${pass:-}" ]] || return 0
+
+  whi_info "MQTT" "Authentification MQTT activée.\n\nServeur     : 127.0.0.1\nPort        : 1883\nUtilisateur : ${user}\nMot de passe: ${pass}\n\nÀ reporter dans Home Assistant :\nParamètres > Appareils et services > Intégration MQTT > Configurer.\n\n(Valeurs conservées dans ${ENV_FILE})"
+}
+
+# Migration interactive de l'auth MQTT (cf. cycle de vie en tête de section).
+# Return: UI_OK / UI_BACK / UI_ABORT.
+prompt_mqtt_auth() {
+  # Conf écrite à la main par l'utilisateur : on ne gère pas.
+  if mqtt_conf_is_unmanaged; then
+    return 0
+  fi
+
+  local auth
+  auth="$(mqtt_auth_state_get)"
+
+  if [[ "$auth" == "1" ]]; then
+    # Déjà activée (ou install neuve). Cas "credentials perdus" : auth voulue
+    # mais secrets inconnus du kit alors qu'une conf existe déjà.
+    local user pass
+    user="$(strip_key_prefix_if_any "MQTT_USER" "$(env_get "MQTT_USER" "$ENV_FILE" 2>/dev/null || true)")"
+    pass="$(strip_key_prefix_if_any "MQTT_PASSWORD" "$(env_get "MQTT_PASSWORD" "$ENV_FILE" 2>/dev/null || true)")"
+    if [[ -f "$(mqtt_conf_path)" && -z "${pass:-}" ]]; then
+      local p
+      p="$(whi_pass "MQTT" "L'authentification MQTT est active mais les identifiants ne sont pas connus du kit.\n\nSaisis le mot de passe MQTT actuel (il sera réappliqué à l'identique), ou laisse vide pour en GÉNÉRER un nouveau (il faudra alors le mettre à jour dans Home Assistant).")" || return $?
+      if [[ -n "${p:-}" ]]; then
+        env_set_kv "MQTT_USER" "${user:-ha}" "$ENV_FILE"
+        env_set_kv "MQTT_PASSWORD" "$p" "$ENV_FILE"
+        export MQTT_USER="${user:-ha}" MQTT_PASSWORD="$p"
+      fi
+      # Vide => mqtt_ensure_creds_env génèrera au prepare.
+    fi
+    env_set_kv "MQTT_AUTH" "1" "$ENV_FILE"
+    export MQTT_AUTH=1
+    return 0
+  fi
+
+  # Stack existante sans auth : migration explicite, défaut = non.
+  local ans
+  ans="$(whi_yesno_back "MQTT" "Le broker MQTT accepte actuellement les connexions ANONYMES : tout processus local peut piloter les équipements Zigbee.\n\nActiver l'authentification ?\n\nATTENTION : il faudra ensuite mettre à jour l'intégration MQTT dans Home Assistant (les identifiants seront affichés), sinon Zigbee sera indisponible dans HA." "no")" || return $?
+  if [[ "$ans" == "yes" ]]; then
+    env_set_kv "MQTT_AUTH" "1" "$ENV_FILE"
+    export MQTT_AUTH=1
+  else
+    env_set_kv "MQTT_AUTH" "0" "$ENV_FILE"
+    export MQTT_AUTH=0
+  fi
+  return 0
 }
 
 zigbee_upsert_z2m_serial_config() {
@@ -402,8 +609,30 @@ prepare_zigbee2mqtt_stack() {
     "${STACK_DIR}/mosquitto/data" \
     "${STACK_DIR}/mosquitto/log"
 
-  zigbee_write_mosquitto_config
+  # État d'auth MQTT (défaut: activée sur install neuve, désactivée sur stack
+  # héritée tant que la migration n'a pas été acceptée). On le fige dans .env
+  # AVANT d'écrire mosquitto.conf : sinon le défaut "install neuve" basculerait
+  # à 0 au 2e passage, une fois la conf créée.
+  local mqtt_auth mqtt_user="" mqtt_pass=""
+  mqtt_auth="$(mqtt_auth_state_get)"
+  env_set_kv "MQTT_AUTH" "$mqtt_auth" "$ENV_FILE"
+  export MQTT_AUTH="$mqtt_auth"
+
+  if [[ "$mqtt_auth" == "1" ]]; then
+    mqtt_ensure_creds_env
+    mqtt_user="$MQTT_USER"
+    mqtt_pass="$MQTT_PASSWORD"
+    # Régénéré à chaque passage : le hash ne permet pas de détecter un
+    # changement de MQTT_PASSWORD dans .env, et l'écriture est atomique
+    # (passwd.new -> passwd), donc sans risque. Best-effort si docker absent.
+    mqtt_write_passwd_file "$mqtt_user" "$mqtt_pass" || true
+  fi
+
+  zigbee_write_mosquitto_config "$mqtt_auth"
   zigbee_write_z2m_config "$serial_port" "$adapter"
+  if ! mqtt_conf_is_unmanaged; then
+    zigbee_upsert_z2m_mqtt_credentials "${STACK_DIR}/zigbee2mqtt/data/configuration.yaml" "$mqtt_user" "$mqtt_pass"
+  fi
 }
 
 prompt_zigbee_mode() {
@@ -484,11 +713,28 @@ prompt_zigbee_mode() {
             ;;
         esac
       fi
+
+      # Auth MQTT : migration/état AVANT prepare (qui applique l'état).
+      local mqtt_rc
+      if prompt_mqtt_auth; then
+        :
+      else
+        mqtt_rc=$?
+        case "$mqtt_rc" in
+          "$UI_BACK")
+            continue
+            ;;
+          *)
+            return "$mqtt_rc"
+            ;;
+        esac
+      fi
     fi
 
     sync_zigbee_env "$mode_choice" "$selected_port" "$adapter_choice"
     if [[ "$mode_choice" == "zigbee2mqtt" ]]; then
       prepare_zigbee2mqtt_stack "${ZIGBEE_SERIAL_PORT:-$(zigbee_resolve_serial_port "$selected_port")}" "$(zigbee_adapter_get)"
+      mqtt_show_credentials_info || true
     fi
     return 0
   done

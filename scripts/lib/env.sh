@@ -20,11 +20,22 @@ whi_escape() {
 }
 
 # env_get: print the value of KEY from FILE. Return 0 if found, 1 otherwise.
-# stdout: value
+# stdout: value (brute, sans le préfixe "KEY=" ; les '=' contenus dans la
+# valeur sont préservés). Les valeurs héritées polluées "KEY=KEY=value" par
+# d'anciennes versions restent nettoyées par strip_key_prefix_if_any côté
+# appelant.
 env_get() {
   local key="$1" file="$2"
   [[ -f "$file" ]] || return 1
-  awk -F= -v k="$key" 'BEGIN{found=0} $0 ~ "^[[:space:]]*"k"=" {sub(/^[[:space:]]*"k"=/, ""); print; found=1; exit} END{exit(found?0:1)}' "$file"
+  awk -v k="$key" '
+    $0 ~ "^[[:space:]]*"k"=" {
+      sub(/^[[:space:]]*/, "")
+      print substr($0, length(k) + 2)
+      found = 1
+      exit
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$file"
 }
 
 env_has_key() {

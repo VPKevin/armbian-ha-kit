@@ -328,6 +328,13 @@ Zigbee
   - exposé à HA       : ${zigbee_ha_device}
   - adaptateur Z2M    : ${zigbee_adapter}
 $(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then printf '%s\n' '  - UI locale         : http://127.0.0.1:8099'; fi)
+$(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then
+    if [[ "$(mqtt_auth_state_get)" == "1" ]]; then
+      printf '%s\n' "  - MQTT auth         : oui (user: ${MQTT_USER:-ha}, mot de passe dans .env)"
+    else
+      printf '%s\n' '  - MQTT auth         : non (connexions anonymes)'
+    fi
+  fi)
 EOF
 )
 
