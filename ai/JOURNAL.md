@@ -135,3 +135,28 @@ Format d'entrée (obligatoire):
 - Commentaires / next steps:
   - MIGRATION UTILISATEUR : sur la stack existante, relancer le wizard Zigbee et accepter l'auth ⇒ mettre à jour l'intégration MQTT dans HA avec les identifiants affichés (aussi dans /srv/ha-stack/.env). Sans action, rien ne change (défaut = non).
   - Audit §1.1 et §1.2 marqués TRAITÉS. Étape suivante (§6.3) : fiabiliser backup.sh (échecs non silencieux, PGPASSWORD hors de ps, chmod Restic, restic forget --tag, TimeoutStartSec).
+
+---
+
+- Date: 2026-07-03
+- Auteur: Claude (Fable 5)
+- Type: code + test + infra
+- Impact: P0/P1
+- Résumé court: Étape 3 de l'audit — backup.sh fiabilisé (échecs non silencieux ni en cascade, plus de PGPASSWORD), chmod Restic, durcissement du service systemd. Bats 27/27, E2E postgres + restic réels.
+- Détails:
+  - `scripts/backup.sh` réécrit :
+    - Contrat d'échec : chaque étape isolée (dump ; backup puis forget par repo) — un NAS mort n'empêche plus le backup USB suivant, un échec de dump n'empêche plus restic. Échecs accumulés dans FAILURES, bilan loggé, exit 1 final ⇒ systemd marque le run failed (avant : `|| true` silencieux côté ui_run, cascade set -e côté console).
+    - Sécurité : PGPASSWORD supprimé — dump via `docker exec <pg> pg_dump` par le socket local (auth trust de l'image postgres officielle, validé E2E sur postgres:16 réel). Branches ui_run/bash -lc supprimées (mortes — ui.sh jamais sourcé par backup.sh — et injectables via apostrophe dans le mot de passe).
+    - Dump en pipeline `pg_dump | gzip > f` (pipefail) avec suppression du fichier partiel sur échec.
+    - `restic forget --tag homeassistant` (aligné sur le tag du backup ; ne purge plus les snapshots hors kit).
+    - Ordre corrigé : repos.conf absent ⇒ skip restic proprement ; le mot de passe restic n'est exigé que si des repos existent.
+  - `scripts/lib/restic.sh` : chmod 600 immédiatement après chaque écriture du mot de passe (les 2 branches interactives) ; chmod final inatteignable supprimé (audit §1.3, code mort restic.sh:123).
+  - `systemd/ha-backup.service` : TimeoutStartSec=1h (NAS mort ⇒ pas de restic pendu indéfiniment), Nice=10, IOSchedulingClass=best-effort prio 7.
+  - `tests/backup.bats` réécrit : stub docker adapté (dump sur stdout pour le pipeline), stub restic avec journal des appels + RESTIC_FAIL_REPO ; 4 tests — skip propre si repos.conf vide ; repo mort ⇒ continue sur le suivant + rc=1 + message explicite + pas de forget sur le mort ; échec pg_dump ⇒ pas de dump partiel + restic quand même + rc=1 ; garde anti-régression grep PGPASSWORD=.
+  - `tests/install_env.bats` : test permissions 600 du mot de passe Restic (chemin non-interactif).
+- Tests:
+  - bats (debian:bookworm) : **27/27 ok**. (2 corrections de mes propres tests en route : chaque `run` bats écrase $output — assertions sur la sortie déplacées avant les greps ; le garde PGPASSWORD matchait le commentaire ⇒ resserré sur `PGPASSWORD=`.)
+  - E2E pg_dump sans mot de passe : conteneur postgres:16 réel, `docker exec pg_dump -U ha` sans PGPASSWORD ⇒ dump OK (rc=0).
+  - E2E restic réel (debian + restic apt) : run nominal rc=0 + snapshot créé + dump gzippé ; run avec repo mort en 1re position ⇒ rc=1, bilan "FAILED steps", repo sain sauvegardé ET purgé (retention --keep-daily vérifiée en conditions réelles).
+  - shellcheck : aucun nouveau warning (reste SC2034 RESTIC_PROMPTED, faux positif préexistant lu par install.sh).
+- Commentaires / next steps: audit §1.3, §1.4, §3.1, §3.2, §3.3 marqués TRAITÉS. Nice-to-have restants notés dans l'audit : OnFailure= (notification d'échec active), restic check périodique. Étape suivante (§6.4) : file_mtime, implémentation UPnP, nettoyage fstab à l'uninstall.

@@ -460,6 +460,18 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "setup_restic_password (non-interactif) crée le fichier de mot de passe en 600" {
+  test_install_sh_loaded
+
+  run setup_restic_password
+  [ "$status" -eq 0 ]
+  [ -f "$RESTIC_PASS" ]
+  [ -s "$RESTIC_PASS" ]
+
+  run stat -c %a "$RESTIC_PASS"
+  [ "$output" = "600" ]
+}
+
 @test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
   test_install_sh_loaded
 

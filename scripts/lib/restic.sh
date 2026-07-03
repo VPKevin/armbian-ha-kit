@@ -109,6 +109,7 @@ setup_restic_password() {
         fi
 
         printf "%s" "$p1" > "$RESTIC_PASS"
+        chmod 600 "$RESTIC_PASS"
         return 0
       done
       if [[ $back_to_prompt -eq 1 ]]; then
@@ -116,12 +117,10 @@ setup_restic_password() {
       fi
     else
       head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
+      chmod 600 "$RESTIC_PASS"
       return 0
     fi
   done
-
-  chmod 600 "$RESTIC_PASS"
-  return 0
 }
 
 restic_choose_repo() {

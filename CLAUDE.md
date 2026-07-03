@@ -69,8 +69,11 @@ Résumé des priorités (maj 2026-07-03) :
    explicite défaut=non, rotation via menu status). Clés .env : MQTT_AUTH,
    MQTT_USER, MQTT_PASSWORD. Une conf mosquitto sans le marqueur
    "# Managed by armbian-ha-kit" n'est JAMAIS touchée.
-3. Fiabiliser `backup.sh` (échecs silencieux, PGPASSWORD dans `ps`, chmod du
-   mot de passe Restic manquant — code mort ligne restic.sh:123).
+3. ✅ FAIT — `backup.sh` réécrit : échecs par repo isolés + bilan + exit 1
+   (systemd voit le failed), dump sans PGPASSWORD (socket local, validé E2E),
+   `restic forget --tag homeassistant`, chmod 600 Restic, TimeoutStartSec/Nice
+   sur le service. Restent (nice-to-have) : OnFailure= notification,
+   restic check périodique.
 4. `file_mtime` jamais défini (uninstall ne supprime jamais les paquets) ;
    `ENABLE_UPNP` : à IMPLÉMENTER (décision mainteneur — miniupnpc + timer de
    renouvellement, voir audit §2.3), ne pas retirer la feature.

@@ -6,3 +6,9 @@ After=network-online.target docker.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/ha-backup.sh
+# Un NAS mort ne doit pas laisser restic pendre indéfiniment.
+TimeoutStartSec=1h
+# Le backup ne doit pas concurrencer Home Assistant sur une petite box.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
