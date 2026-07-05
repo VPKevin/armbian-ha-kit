@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew UPnP port mappings (80/443) for Home Assistant / Caddy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ha-upnp.sh
+TimeoutStartSec=120

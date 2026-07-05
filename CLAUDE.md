@@ -74,7 +74,7 @@ Résumé des priorités (maj 2026-07-03) :
    `restic forget --tag homeassistant`, chmod 600 Restic, TimeoutStartSec/Nice
    sur le service. Restent (nice-to-have) : OnFailure= notification,
    restic check périodique.
-4. `file_mtime` jamais défini (uninstall ne supprime jamais les paquets) ;
-   `ENABLE_UPNP` : à IMPLÉMENTER (décision mainteneur — miniupnpc + timer de
-   renouvellement, voir audit §2.3), ne pas retirer la feature.
+4. ✅ FAIT — `file_mtime` défini (common.sh) ; UPnP implémenté (lib/upnp.sh +
+   scripts/upnp-renew.sh + ha-upnp.timer 45min, retiré à l'uninstall) ;
+   fstab nettoyé à l'uninstall (mounts.list dans l'état + défauts hérités).
 5. Ajouter une CI GitHub Actions : shellcheck + shfmt + bats.

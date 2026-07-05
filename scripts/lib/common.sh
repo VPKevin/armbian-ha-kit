@@ -23,6 +23,11 @@ set -euo pipefail
 
 req_bin() { command -v "$1" >/dev/null 2>&1; }
 
+# Epoch mtime d'un fichier (GNU stat puis BSD stat). Return non-zero si échec.
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
 is_interactive_tty() {
   [[ -t 0 && -t 1 ]] && return 0
   # /dev/tty peut exister sans être utilisable (container/cron sans terminal
@@ -72,6 +77,30 @@ apt_state_list() {
   f="$(apt_state_file)"
   [[ -f "$f" ]] || return 0
   # ignore lignes vides/commentaires
+  grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
+}
+
+# Suivi des points de montage (NAS/USB) créés par le kit, pour que la
+# désinstallation puisse retirer exactement les entrées fstab correspondantes.
+mounts_state_file() {
+  echo "$(apt_state_dir)/mounts.list"
+}
+
+mounts_state_add() {
+  local mountpoint="$1"
+  [[ -n "${mountpoint:-}" ]] || return 0
+  apt_state_init
+  local f
+  f="$(mounts_state_file)"
+  touch "$f" 2>/dev/null || true
+  chmod 600 "$f" 2>/dev/null || true
+  grep -Fxq "$mountpoint" "$f" 2>/dev/null || printf '%s\n' "$mountpoint" >>"$f"
+}
+
+mounts_state_list() {
+  local f
+  f="$(mounts_state_file)"
+  [[ -f "$f" ]] || return 0
   grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
 }
 

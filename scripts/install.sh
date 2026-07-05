@@ -34,6 +34,8 @@ source "${SCRIPT_DIR}/lib/backup_targets.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/systemd.sh"
 # shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/upnp.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/health.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/uninstall.sh"
@@ -187,7 +189,7 @@ prompt_features() {
       ans="$(whi_yesno_back "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement." "yes")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     else
-      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
+      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports 80/443 sur ta box) ?\n\nATTENTION : ceci EXPOSE Home Assistant sur Internet (via Caddy/HTTPS).\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     fi
   fi
@@ -690,6 +692,7 @@ main() {
         fi
 
         configure_homeassistant_yaml
+        setup_upnp || true
         if start_stack; then
           if wait_for_health 240; then
             whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"

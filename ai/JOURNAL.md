@@ -160,3 +160,25 @@ Format d'entrée (obligatoire):
   - E2E restic réel (debian + restic apt) : run nominal rc=0 + snapshot créé + dump gzippé ; run avec repo mort en 1re position ⇒ rc=1, bilan "FAILED steps", repo sain sauvegardé ET purgé (retention --keep-daily vérifiée en conditions réelles).
   - shellcheck : aucun nouveau warning (reste SC2034 RESTIC_PROMPTED, faux positif préexistant lu par install.sh).
 - Commentaires / next steps: audit §1.3, §1.4, §3.1, §3.2, §3.3 marqués TRAITÉS. Nice-to-have restants notés dans l'audit : OnFailure= (notification d'échec active), restic check périodique. Étape suivante (§6.4) : file_mtime, implémentation UPnP, nettoyage fstab à l'uninstall.
+
+---
+
+- Date: 2026-07-04
+- Auteur: Claude (Fable 5)
+- Type: code + test + infra
+- Impact: P0/P1
+- Résumé court: Étape 4 de l'audit — file_mtime défini, UPnP implémenté (miniupnpc + timer de renouvellement), nettoyage fstab à la désinstallation. Bats 32/32.
+- Détails:
+  - `scripts/lib/common.sh` : file_mtime (GNU puis BSD stat — la fonction était appelée par uninstall.sh sans exister : la suppression de paquets ne faisait jamais rien) ; helpers mounts_state_file/add/list (suivi des mountpoints NAS/USB créés par le kit dans $AHK_STATE_DIR/mounts.list). status.sh refactoré pour utiliser file_mtime.
+  - UPnP (audit §2.3, décision mainteneur : implémenter) :
+    - `scripts/lib/upnp.sh` : upnp_lan_ip (ip route get), upnp_map_port (idempotent, résout ConflictInMappingEntry 718 par delete+retry), upnp_apply (80+443 TCP), upnp_remove_mappings, remove_upnp_units, setup_upnp (installe miniupnpc tracé dans l'état apt, unités systemd, application immédiate + msgbox succès/échec IGD ; nettoie tout si ENABLE_UPNP repasse à 0 ; skip avec warning si Caddy désactivé — ports vers rien).
+    - `scripts/upnp-renew.sh` + `ha-upnp.sh` (exec sbin) + `systemd/ha-upnp.service`/`ha-upnp.timer` (OnBootSec=2min, OnUnitActiveSec=45min) : renouvellement périodique, les box perdant les mappings au reboot/expiration.
+    - `scripts/install.sh` : source upnp.sh, setup_upnp après le wizard, question UPnP enrichie de l'avertissement d'exposition Internet.
+  - `scripts/lib/uninstall.sh` : uninstall_cleanup_fstab (umount + retrait fstab des mountpoints tracés + défauts historiques /mnt/nasbackup, /mnt/usbbackup + lignes credentials=$SAMBA_CREDS pour les installs antérieures au suivi ; exécuté AVANT la suppression des creds) ; retrait des mappings UPnP et de ha-upnp.timer.
+  - `scripts/lib/backup_targets.sh` : FSTAB_PATH surchargeable (tests), mounts_state_add après chaque écriture fstab.
+  - Tests (5 nouveaux) : file_mtime, mounts_state dédup, uninstall_cleanup_fstab (lignes kit retirées, lignes utilisateur préservées), upnp_map_port (ok/conflit résolu/no-IGD), upnp_lan_ip.
+- Tests:
+  - bats (debian:bookworm) : **32/32 ok**.
+  - Exécution réelle de scripts/upnp-renew.sh (libs sourcées, .env réel, stubs upnpc/ip) dans les 4 états : désactivé rc=0, actif+Caddy rc=0 avec mappings, actif sans Caddy skip rc=0, IGD absent rc=1 avec message explicite.
+  - shellcheck : 0 warning sur les nouveaux fichiers (restent les faux positifs préexistants de common.sh).
+- Commentaires / next steps: audit §2.2, §2.3, §3.6 marqués TRAITÉS. Étape suivante (§6.5) : quoting des valeurs .env (sourcé en root) + URL-encoding du db_url recorder, healthcheck Caddy, pin zigbee2mqtt:2, IP statique Caddy + trusted_proxies /32.

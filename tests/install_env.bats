@@ -460,6 +460,119 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "file_mtime retourne l'epoch d'un fichier et échoue sur un fichier absent" {
+  test_install_sh_loaded
+
+  local f="$TMPDIR/mtime-test"
+  touch "$f"
+
+  run file_mtime "$f"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+$ ]]
+
+  run file_mtime "$TMPDIR/does-not-exist"
+  [ "$status" -ne 0 ]
+}
+
+@test "mounts_state_add trace les mountpoints sans doublon" {
+  test_install_sh_loaded
+  export AHK_STATE_DIR="$TMPDIR/state"
+
+  mounts_state_add "/mnt/nasbackup"
+  mounts_state_add "/mnt/usbbackup"
+  mounts_state_add "/mnt/nasbackup"
+
+  run mounts_state_list
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "$output" == *"/mnt/nasbackup"* ]]
+  [[ "$output" == *"/mnt/usbbackup"* ]]
+}
+
+@test "uninstall_cleanup_fstab retire les montages du kit et préserve le reste" {
+  test_install_sh_loaded
+  export AHK_STATE_DIR="$TMPDIR/state"
+  export FSTAB_PATH="$TMPDIR/fstab"
+
+  # mountpoint custom tracé par l'état (installation récente)
+  mounts_state_add "/mnt/custom-nas"
+
+  cat >"$FSTAB_PATH" <<EOF
+UUID=root-uuid  /  ext4  defaults  0  1
+//nas/share  /mnt/custom-nas  cifs  credentials=${SAMBA_CREDS},nofail  0  0
+UUID=aaaa-bbbb  /mnt/usbbackup  auto  nofail,x-systemd.automount  0  2
+//other/share  /mnt/perso  cifs  credentials=/etc/samba/creds-perso  0  0
+EOF
+
+  run uninstall_cleanup_fstab
+  [ "$status" -eq 0 ]
+
+  # les lignes du kit ont disparu (état + défaut historique)
+  run grep -F '/mnt/custom-nas' "$FSTAB_PATH"
+  [ "$status" -ne 0 ]
+  run grep -F '/mnt/usbbackup' "$FSTAB_PATH"
+  [ "$status" -ne 0 ]
+  # les lignes de l'utilisateur sont intactes
+  run grep -F 'UUID=root-uuid' "$FSTAB_PATH"
+  [ "$status" -eq 0 ]
+  run grep -F '/mnt/perso' "$FSTAB_PATH"
+  [ "$status" -eq 0 ]
+}
+
+@test "upnp_map_port réussit, résout les conflits, et échoue proprement sans IGD" {
+  test_install_sh_loaded
+
+  # stub upnpc piloté par UPNPC_MODE
+  cat >"$TMPDIR/bin/upnpc" <<'EOF'
+#!/usr/bin/env bash
+case "${UPNPC_MODE:-ok}" in
+  ok)
+    echo "external 1.2.3.4:80 TCP is redirected to internal 192.168.1.42:80"
+    ;;
+  conflict-once)
+    if [[ "$1" == "-d" ]]; then exit 0; fi
+    if [[ -f "${UPNPC_STATE}" ]]; then
+      echo "external 1.2.3.4:80 TCP is redirected to internal 192.168.1.42:80"
+    else
+      touch "${UPNPC_STATE}"
+      echo "AddPortMapping(80, 80, 192.168.1.42) failed with code 718 (ConflictInMappingEntry)"
+    fi
+    ;;
+  noigd)
+    echo "No IGD UPnP Device found on the network !"
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$TMPDIR/bin/upnpc"
+
+  export UPNPC_MODE=ok
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -eq 0 ]
+
+  export UPNPC_MODE=conflict-once UPNPC_STATE="$TMPDIR/upnpc-state"
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -eq 0 ]
+
+  export UPNPC_MODE=noigd
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -ne 0 ]
+}
+
+@test "upnp_lan_ip extrait l'IP source de 'ip route get'" {
+  test_install_sh_loaded
+
+  cat >"$TMPDIR/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.42 uid 0"
+EOF
+  chmod +x "$TMPDIR/bin/ip"
+
+  run upnp_lan_ip
+  [ "$status" -eq 0 ]
+  [ "$output" = "192.168.1.42" ]
+}
+
 @test "setup_restic_password (non-interactif) crée le fichier de mot de passe en 600" {
   test_install_sh_loaded
 

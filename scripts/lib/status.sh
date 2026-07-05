@@ -37,7 +37,7 @@ get_last_backup_local() {
   while IFS= read -r f; do
     [[ -z "${f:-}" ]] && continue
     local m
-    m="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+    m="$(file_mtime "$f" 2>/dev/null || echo 0)"
     if [[ -z "${newest:-}" ]]; then
       newest="$f:$m"
       continue
