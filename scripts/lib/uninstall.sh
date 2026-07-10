@@ -8,6 +8,39 @@ set -euo pipefail
 
 SAMBA_CREDS="${SAMBA_CREDS:-/etc/samba/creds-ha-nas}"
 
+# Retire de fstab les montages créés par le kit (audit §3.6) :
+# - les mountpoints tracés dans l'état (mounts.list) — installations récentes ;
+# - les mountpoints par défaut historiques (installations antérieures au suivi) ;
+# - toute ligne référençant le fichier de credentials du kit (NAS, quel que
+#   soit le mountpoint choisi).
+# Démonte au passage (best-effort) puis daemon-reload.
+uninstall_cleanup_fstab() {
+  local -a mountpoints=()
+  local mp
+
+  if command -v mounts_state_list >/dev/null 2>&1; then
+    while IFS= read -r mp; do
+      [[ -n "${mp:-}" ]] || continue
+      mountpoints+=("$mp")
+    done < <(mounts_state_list)
+  fi
+  # Défauts historiques (avant le suivi d'état) — dédupliqués ci-dessous.
+  mountpoints+=("/mnt/nasbackup" "/mnt/usbbackup")
+
+  local seen=$'\n'
+  for mp in "${mountpoints[@]}"; do
+    [[ "$seen" == *$'\n'"$mp"$'\n'* ]] && continue
+    seen+="$mp"$'\n'
+    umount "$mp" 2>/dev/null || true
+    fstab_remove_matching "[[:space:]]${mp//\//\\/}[[:space:]]" || true
+  done
+
+  # Lignes NAS du kit identifiables par le fichier de credentials.
+  fstab_remove_matching "credentials=${SAMBA_CREDS//\//\\/}" || true
+
+  systemctl daemon-reload 2>/dev/null || true
+}
+
 uninstall_remove_packages() {
   # Best-effort: retirer des dépendances installées par le projet.
   # On ne purge pas docker/caddy (peut être utilisé par d'autres services).
@@ -178,8 +211,20 @@ uninstall_wizard() {
   rm -f /etc/systemd/system/ha-backup.timer /etc/systemd/system/ha-backup.service
   systemctl daemon-reload 2>/dev/null || true
 
+  # UPnP : fermer les ports sur la box puis retirer le timer de renouvellement.
+  if command -v upnp_remove_mappings >/dev/null 2>&1; then
+    upnp_remove_mappings || true
+  fi
+  if command -v remove_upnp_units >/dev/null 2>&1; then
+    remove_upnp_units || true
+  fi
+
   # bin
   rm -f /usr/local/sbin/ha-backup.sh 2>/dev/null || true
+
+  # fstab : montages NAS/USB créés par le kit (AVANT de supprimer les creds,
+  # que le nettoyage utilise pour identifier les lignes NAS).
+  uninstall_cleanup_fstab || true
 
   # creds
   rm -f "$SAMBA_CREDS" 2>/dev/null || true

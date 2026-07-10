@@ -58,7 +58,8 @@ init_restic_repo() {
 }
 
 setup_restic_password() {
-  RESTIC_PROMPTED=0
+  # Signal lu par install.sh (step_restic)
+  export RESTIC_PROMPTED=0
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
     return 0
@@ -109,6 +110,7 @@ setup_restic_password() {
         fi
 
         printf "%s" "$p1" > "$RESTIC_PASS"
+        chmod 600 "$RESTIC_PASS"
         return 0
       done
       if [[ $back_to_prompt -eq 1 ]]; then
@@ -116,12 +118,10 @@ setup_restic_password() {
       fi
     else
       head -c 48 /dev/urandom | base64 > "$RESTIC_PASS"
+      chmod 600 "$RESTIC_PASS"
       return 0
     fi
   done
-
-  chmod 600 "$RESTIC_PASS"
-  return 0
 }
 
 restic_choose_repo() {

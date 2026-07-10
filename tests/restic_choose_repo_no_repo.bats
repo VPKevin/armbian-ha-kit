@@ -35,9 +35,15 @@ EOF
 }
 
 @test "restic_choose_repo: sans repos.conf, n'entre pas en boucle et affiche un message" {
-  run bash -lc '
+  # Racine du repo dérivée du fichier de test (portable : CI, docker, local).
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # bash -c (PAS -lc : un login shell relit les profils et écrase le PATH,
+  # ce qui ferait disparaître les stubs de test).
+  run bash -c '
     set -euo pipefail
-    cd /repo
+    cd "$1"
     export STACK_DIR RESTIC_DIR RESTIC_REPOS RESTIC_PASS
     source ./scripts/lib/i18n.sh
     source ./scripts/lib/common.sh
@@ -46,7 +52,7 @@ EOF
 
     # doit retourner non-0 car pas de repo, mais ne doit pas bloquer
     restic_choose_repo
-  '
+  ' _ "$repo_root"
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"Aucun repository"* ]]

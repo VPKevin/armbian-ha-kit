@@ -12,8 +12,9 @@ set -euo pipefail
 fstab_remove_matching() {
   # Supprime de /etc/fstab les lignes qui matchent un pattern regex (ERE) de façon robuste.
   # On évite `sed -i` sur des patterns non échappés (cause typique de "unterminated address regex").
+  # FSTAB_PATH est surchargeable (tests).
   local pattern="$1"
-  local fstab="/etc/fstab"
+  local fstab="${FSTAB_PATH:-/etc/fstab}"
 
   [[ -f "$fstab" ]] || return 0
 
@@ -51,7 +52,8 @@ EOF
   # Supprime les anciennes entrées sur ce mountpoint
   fstab_remove_matching "[[:space:]]${mountpoint//\//\\/}[[:space:]]" || true
 
-  echo "$remote  $mountpoint  cifs  $opts  0  0" >> /etc/fstab
+  echo "$remote  $mountpoint  cifs  $opts  0  0" >> "${FSTAB_PATH:-/etc/fstab}"
+  mounts_state_add "$mountpoint"
 
   systemctl daemon-reload
 
@@ -182,11 +184,12 @@ setup_usb_backup() {
   # Si l'utilisateur a choisi un UUID => on persiste en UUID. Sinon on persiste via le PATH.
   if [[ "$id" =~ ^[0-9A-Fa-f-]{4,}$ ]]; then
     fstab_remove_matching "^UUID=${id}[[:space:]]" || true
-    echo "UUID=$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
+    echo "UUID=$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> "${FSTAB_PATH:-/etc/fstab}"
   else
     fstab_remove_matching "^${id//\//\\/}[[:space:]]" || true
-    echo "$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> /etc/fstab
+    echo "$id  $mountpoint  auto  nofail,x-systemd.automount  0  2" >> "${FSTAB_PATH:-/etc/fstab}"
   fi
+  mounts_state_add "$mountpoint"
 
   systemctl daemon-reload || true
 

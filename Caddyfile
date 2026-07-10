@@ -1,10 +1,28 @@
+# Bloc :80 explicite : endpoint de healthcheck local (/healthz, utilisé par le
+# healthcheck Docker — sonder / suivrait le 301 vers https://$HA_DOMAIN et
+# échouerait sans DNS/hairpin) + redirection HTTP->HTTPS refaite à la main,
+# car définir un serveur :80 désactive la redirection automatique de Caddy.
+# Le challenge ACME HTTP-01 reste géré par Caddy en amont de ces routes.
+# NB: blocs handle obligatoires — l'ordre standard des directives de Caddy
+# exécute redir AVANT respond, sinon /healthz serait redirigé lui aussi.
+:80 {
+	handle /healthz {
+		respond "OK" 200
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}
+
 {$HA_DOMAIN} {
 	tls {$LE_EMAIL}
 
 	encode gzip zstd
 
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		# Pas de "preload" par défaut : l'inscription sur la preload list HSTS
+		# est un engagement quasi irréversible pour tout le domaine.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"

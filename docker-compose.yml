@@ -27,7 +27,9 @@ services:
     container_name: homeassistant
     restart: unless-stopped
     network_mode: host
-    privileged: true
+    # Pas de "privileged": l'accès au dongle Zigbee (mode ZHA uniquement) passe
+    # par le mapping "devices:" ci-dessous — suffisant car l'image HA tourne en
+    # root. En mode Zigbee2MQTT, HA n'a aucun accès matériel (/dev/null).
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,13 +72,21 @@ services:
       - /srv/ha-stack/caddy/data:/data
       - /srv/ha-stack/caddy/config:/config
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ >/dev/null 2>&1 || curl -fsS http://127.0.0.1:80/ >/dev/null 2>&1 || exit 1"]
+      # /healthz est servi en local par le bloc :80 du Caddyfile — sonder /
+      # renverrait un 301 vers https://$HA_DOMAIN que wget suivrait (échec si
+      # DNS pas encore propagé ou hairpin NAT absent => faux "unhealthy").
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/healthz >/dev/null 2>&1 || curl -fsS http://127.0.0.1:80/healthz >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 20s
     networks:
-      - ha-network
+      ha-network:
+        # IP FIGÉE (dans DOCKER_SUBNET) : c'est la seule adresse que Home
+        # Assistant accepte comme reverse proxy (trusted_proxies) — un autre
+        # conteneur du subnet ne peut plus spoofer X-Forwarded-For.
+        # Cohérence requise avec ha_trusted_base() (scripts/lib/ha.sh).
+        ipv4_address: ${CADDY_STATIC_IP:-172.30.0.10}
 
   mqtt:
     profiles: ["zigbee2mqtt"]
@@ -94,7 +104,9 @@ services:
 
   zigbee2mqtt:
     profiles: ["zigbee2mqtt"]
-    image: ghcr.io/koenkk/zigbee2mqtt:latest
+    # Majeure épinglée : Z2M a déjà cassé des configs entre majeures (1.x->2.x),
+    # et :latest peut sauter une majeure sans prévenir.
+    image: ghcr.io/koenkk/zigbee2mqtt:2
     container_name: ha-zigbee2mqtt
     restart: unless-stopped
     depends_on:
@@ -108,7 +120,8 @@ services:
       - /run/udev:/run/udev:ro
     ports:
       - "127.0.0.1:8099:8080"
-    privileged: true
+    # Pas de "privileged": le mapping "devices:" suffit (l'image Z2M tourne en
+    # root, donc pas besoin de group_add dialout non plus).
     networks:
       - ha-network
 

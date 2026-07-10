@@ -12,7 +12,7 @@ if ! command -v docker >/dev/null 2>&1; then
     echo "docker CLI absent (ok si socket non monté)"
   fi
 else
-  echo "docker CLI:" $(docker --version || true)
+  echo "docker CLI: $(docker --version || true)"
 fi
 
 # Si le socket docker est monté, essayer docker ps

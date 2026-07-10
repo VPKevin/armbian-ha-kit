@@ -23,8 +23,17 @@ set -euo pipefail
 
 req_bin() { command -v "$1" >/dev/null 2>&1; }
 
+# Epoch mtime d'un fichier (GNU stat puis BSD stat). Return non-zero si échec.
+file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
 is_interactive_tty() {
-  [[ -t 0 && -t 1 ]] || [[ -r /dev/tty && -w /dev/tty ]]
+  [[ -t 0 && -t 1 ]] && return 0
+  # /dev/tty peut exister sans être utilisable (container/cron sans terminal
+  # de contrôle) : -r/-w ne testent que les permissions, il faut réellement
+  # tenter l'ouverture en lecture/écriture.
+  { : </dev/tty >/dev/tty; } 2>/dev/null
 }
 
 # Répertoire d'état persistant (suivi des paquets installés par le kit).
@@ -69,6 +78,45 @@ apt_state_list() {
   [[ -f "$f" ]] || return 0
   # ignore lignes vides/commentaires
   grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
+}
+
+# Suivi des points de montage (NAS/USB) créés par le kit, pour que la
+# désinstallation puisse retirer exactement les entrées fstab correspondantes.
+mounts_state_file() {
+  echo "$(apt_state_dir)/mounts.list"
+}
+
+mounts_state_add() {
+  local mountpoint="$1"
+  [[ -n "${mountpoint:-}" ]] || return 0
+  apt_state_init
+  local f
+  f="$(mounts_state_file)"
+  touch "$f" 2>/dev/null || true
+  chmod 600 "$f" 2>/dev/null || true
+  grep -Fxq "$mountpoint" "$f" 2>/dev/null || printf '%s\n' "$mountpoint" >>"$f"
+}
+
+mounts_state_list() {
+  local f
+  f="$(mounts_state_file)"
+  [[ -f "$f" ]] || return 0
+  grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
+}
+
+# Nom de conteneur par défaut pour un service compose — fallback quand
+# `docker compose ps -q` ne répond pas. Source UNIQUE du mapping
+# service→conteneur (utilisé par health.sh et status.sh) : toute modification
+# des container_name du docker-compose.yml doit se refléter ici.
+container_name_for_service() {
+  case "$1" in
+    postgres) echo "ha-postgres" ;;
+    homeassistant) echo "homeassistant" ;;
+    caddy) echo "ha-caddy" ;;
+    mqtt) echo "ha-mqtt" ;;
+    zigbee2mqtt) echo "ha-zigbee2mqtt" ;;
+    *) echo "$1" ;;
+  esac
 }
 
 apt_is_installed() {
@@ -173,16 +221,18 @@ load_env_file() {
 # Trap d'erreur standardisable pour les scripts principaux.
 install_error_trap() {
   local src="${1:-unknown}"
+  # shellcheck disable=SC2154  # rc est assigné dans la chaîne du trap à l'exécution
   trap 'rc=$?; log_error "Echec (${src}) a la ligne ${LINENO} (rc=${rc})"; exit "$rc"' ERR
 }
 
-# Standard return codes (small set pour les scripts)
-RC_OK=0            # réussite
-RC_ERR=1           # erreur générique
-RC_MISUSE=2        # mauvaise utilisation / arguments invalides
-RC_NOT_ROOT=3      # nécessite root
-RC_MISSING_DEP=4   # dépendances manquantes
-RC_PRECHECK=5      # pré-checks échoués
+# Standard return codes (small set pour les scripts) — exportés car
+# consommés par tous les scripts qui sourcent ce module.
+export RC_OK=0            # réussite
+export RC_ERR=1           # erreur générique
+export RC_MISUSE=2        # mauvaise utilisation / arguments invalides
+export RC_NOT_ROOT=3      # nécessite root
+export RC_MISSING_DEP=4   # dépendances manquantes
+export RC_PRECHECK=5      # pré-checks échoués
 
 # Retour standardisé et logging
 # usage: rc_fail "message" [code]

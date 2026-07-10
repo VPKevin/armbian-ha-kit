@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew UPnP port mappings periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=45min
+
+[Install]
+WantedBy=timers.target

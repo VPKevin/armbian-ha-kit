@@ -39,13 +39,17 @@ timer systemd. Tout est en bash, cible = box ARM en root.
 
 ## Pièges connus (lire avant de toucher au code)
 
-- `env_get` (env.sh) retourne actuellement `KEY=value` (bug awk confirmé) —
-  c'est la raison des `strip_key_prefix_if_any` partout. Voir audit §2.1 avant
-  de "nettoyer" l'un ou l'autre.
+- `env_get` (env.sh) : bug historique corrigé le 2026-07-03 (retournait
+  `KEY=value`). Les `strip_key_prefix_if_any` restants sont CONSERVÉS exprès :
+  ils assainissent les `.env` déployés par d'anciennes versions, potentiellement
+  pollués en `KEY=KEY=value`. Ne pas les supprimer sans couvrir ce cas (test
+  bats dédié dans tests/install_env.bats).
+- Stub whiptail des tests : le vrai whiptail écrit la saisie sur STDERR (d'où
+  le swap `3>&1 1>&2 2>&3` dans ui.sh) — tout stub de test doit faire pareil.
 - Le `.env` est à la fois sourcé par bash ET parsé par docker compose : les
   deux parsers divergent sur les quotes/caractères spéciaux.
-- `wait_for_health`/`status.sh` dupliquent le mapping service→conteneur ; toute
-  modif doit être faite aux 3 endroits (ou factorisée, cf. audit).
+- Le mapping service→conteneur est factorisé dans `container_name_for_service`
+  (common.sh) : tout nouveau conteneur du compose doit y être ajouté.
 - whiptail exige un TTY : `install.sh` fait `exec </dev/tty` ; le mode headless
   n'est pas vraiment supporté aujourd'hui.
 
@@ -57,13 +61,29 @@ corrections proposées et **ordre d'exécution recommandé en §6**. C'est le
 backlog de référence : le consulter avant d'entreprendre des corrections, et y
 marquer les points traités.
 
-Résumé des priorités au 2026-07-02 :
-1. Bug `env_get` (audit §2.1) — corriger l'awk puis retirer les workarounds.
-2. Retirer `privileged: true` des conteneurs HA/Z2M ; authentifier Mosquitto
-   (⚠ cassant pour les stacks existantes — suivre le plan de migration, audit §1.2).
-3. Fiabiliser `backup.sh` (échecs silencieux, PGPASSWORD dans `ps`, chmod du
-   mot de passe Restic manquant — code mort ligne restic.sh:123).
-4. `file_mtime` jamais défini (uninstall ne supprime jamais les paquets) ;
-   `ENABLE_UPNP` : à IMPLÉMENTER (décision mainteneur — miniupnpc + timer de
-   renouvellement, voir audit §2.3), ne pas retirer la feature.
-5. Ajouter une CI GitHub Actions : shellcheck + shfmt + bats.
+Résumé des priorités (maj 2026-07-03) :
+1. ✅ FAIT — Bug `env_get` (audit §2.1) : awk corrigé, strips conservés en
+   nettoyage défensif, 5 tests bats ajoutés, suite 19/19 verte.
+2. ✅ FAIT — `privileged` retiré (devices: suffit, images en root) ; auth MQTT
+   implémentée avec le cycle de vie complet (fresh=on par défaut, migration
+   explicite défaut=non, rotation via menu status). Clés .env : MQTT_AUTH,
+   MQTT_USER, MQTT_PASSWORD. Une conf mosquitto sans le marqueur
+   "# Managed by armbian-ha-kit" n'est JAMAIS touchée.
+3. ✅ FAIT — `backup.sh` réécrit : échecs par repo isolés + bilan + exit 1
+   (systemd voit le failed), dump sans PGPASSWORD (socket local, validé E2E),
+   `restic forget --tag homeassistant`, chmod 600 Restic, TimeoutStartSec/Nice
+   sur le service. Restent (nice-to-have) : OnFailure= notification,
+   restic check périodique.
+4. ✅ FAIT — `file_mtime` défini (common.sh) ; UPnP implémenté (lib/upnp.sh +
+   scripts/upnp-renew.sh + ha-upnp.timer 45min, retiré à l'uninstall) ;
+   fstab nettoyé à l'uninstall (mounts.list dans l'état + défauts hérités).
+5. ✅ FAIT — Quoting .env (env_set_kv single-quote les valeurs spéciales,
+   env_get symétrique, apostrophes retirées) ; db_url recorder URL-encodé ;
+   healthcheck Caddy sur /healthz (bloc :80 avec handle — l'ordre des
+   directives Caddy n'est PAS celui du fichier) ; zigbee2mqtt épinglé :2 ;
+   Caddy en IP figée (CADDY_STATIC_IP) seule trustée par HA.
+6. ✅ FAIT — CI GitHub Actions (.github/workflows/ci.yml) : shellcheck
+   BLOQUANT (repo à 0 warning — le maintenir), shfmt informatif, bats root
+   avec restic réel (dont tests/restore.bats). Fait aussi : HSTS sans
+   preload, .env exclu de bootstrap --local, ip_ban HA, mapping
+   service→conteneur factorisé.

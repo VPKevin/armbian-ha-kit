@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STACK_DIR="/srv/ha-stack"
+# Backup Home Assistant : dump PostgreSQL + snapshots Restic vers chaque repo
+# de restic/repos.conf.
+#
+# Contrat d'échec (audit §3.1) :
+# - Chaque étape (dump, backup/forget par repo) est tentée même si une étape
+#   précédente a échoué : un NAS débranché ne doit pas empêcher le backup USB.
+# - Aucune erreur n'est silencieuse : tout échec est loggé ET le script sort
+#   avec un code non-zéro pour que systemd marque le run "failed".
+#
+# Sécurité (audit §1.4) : pas de PGPASSWORD — le dump passe par le socket
+# local du conteneur (auth "trust" de l'image postgres officielle), donc aucun
+# secret sur la ligne de commande ni dans /proc.
+
+STACK_DIR="${STACK_DIR:-/srv/ha-stack}"
 ENV_FILE="${STACK_DIR}/.env"
 BACKUP_DIR="${STACK_DIR}/backup"
 LOG_TAG="[ha-backup]"
@@ -40,7 +53,7 @@ pg_container_id() {
 }
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "$LOG_TAG Missing $ENV_FILE"
+  echo "$LOG_TAG Missing $ENV_FILE" >&2
   exit 1
 fi
 
@@ -51,66 +64,76 @@ set +a
 
 mkdir -p "$BACKUP_DIR"
 
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
-DUMP_FILE="${BACKUP_DIR}/postgres-${TS}.sql"
+# Échecs accumulés : on continue le run, on sort non-zéro à la fin.
+FAILURES=()
 
-if command -v ui_run >/dev/null 2>&1; then
-  ui_notify "Dump PostgreSQL vers ${DUMP_FILE}.gz"
-  # Exécuter la commande via bash -lc pour que la redirection soit faite dans
-  # le sous-shell invoqué par ui_run (sinon la redirection serait appliquée
-  # par le shell appelant et le dump n'irait pas dans $DUMP_FILE).
-  ui_run "pg_dump" -- bash -lc "docker exec -e PGPASSWORD='${POSTGRES_PASSWORD}' $(pg_container_id) pg_dump -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\" --no-owner --no-privileges > \"${DUMP_FILE}\"" || true
-  gzip -f "$DUMP_FILE"
-else
-  echo "$LOG_TAG Dumping PostgreSQL database to $DUMP_FILE.gz ..."
-  docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" "$(pg_container_id)" \
+# ---------------------------------------------------------------------------
+# 1) Dump PostgreSQL (via le socket local du conteneur, sans mot de passe)
+# ---------------------------------------------------------------------------
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+DUMP_FILE="${BACKUP_DIR}/postgres-${TS}.sql.gz"
+
+echo "$LOG_TAG Dumping PostgreSQL database to $DUMP_FILE ..."
+if ! docker exec "$(pg_container_id)" \
     pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --no-owner --no-privileges \
-    > "$DUMP_FILE"
-  gzip -f "$DUMP_FILE"
+    | gzip > "$DUMP_FILE"; then
+  echo "$LOG_TAG ERROR: pg_dump failed" >&2
+  rm -f "$DUMP_FILE"
+  FAILURES+=("pg_dump")
 fi
 
-# Sauvegarder avec restic vers les repos configurés (NAS/USB)
-# Les repos sont décrits dans ${STACK_DIR}/restic/repos.conf
+# ---------------------------------------------------------------------------
+# 2) Snapshots Restic vers chaque repo configuré (NAS/USB)
+# ---------------------------------------------------------------------------
 REPOS_CONF="${STACK_DIR}/restic/repos.conf"
 PASSFILE="${STACK_DIR}/restic/password"
 
-if [[ ! -f "$PASSFILE" ]]; then
-  echo "$LOG_TAG Missing restic password file: $PASSFILE"
+if [[ ! -f "$REPOS_CONF" ]]; then
+  echo "$LOG_TAG No repos configured ($REPOS_CONF). Skipping restic backup."
+else
+  if [[ ! -f "$PASSFILE" ]]; then
+    echo "$LOG_TAG ERROR: Missing restic password file: $PASSFILE" >&2
+    FAILURES+=("restic password file")
+  else
+    export RESTIC_PASSWORD_FILE="$PASSFILE"
+
+    while IFS= read -r repo; do
+      [[ -z "$repo" ]] && continue
+      [[ "$repo" =~ ^# ]] && continue
+
+      export RESTIC_REPOSITORY="$repo"
+
+      echo "$LOG_TAG Restic backup to: $repo"
+      if ! restic backup "${STACK_DIR}/config" "${BACKUP_DIR}" --tag homeassistant; then
+        echo "$LOG_TAG ERROR: restic backup failed for: $repo (repo inaccessible ? NAS/USB monté ?)" >&2
+        FAILURES+=("restic backup: $repo")
+        # Repo inaccessible : inutile de tenter le forget, on passe au suivant.
+        continue
+      fi
+
+      echo "$LOG_TAG Retention (tag=homeassistant, daily=7 weekly=10) on: $repo"
+      if ! restic forget --tag homeassistant --keep-daily 7 --keep-weekly 10 --prune; then
+        echo "$LOG_TAG ERROR: restic forget failed for: $repo" >&2
+        FAILURES+=("restic forget: $repo")
+      fi
+    done < "$REPOS_CONF"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3) Nettoyage des dumps locaux anciens (filet si restic indisponible)
+# ---------------------------------------------------------------------------
+find "$BACKUP_DIR" -type f -name "postgres-*.sql.gz" -mtime +21 -delete || true
+
+# ---------------------------------------------------------------------------
+# Bilan
+# ---------------------------------------------------------------------------
+if [[ ${#FAILURES[@]} -gt 0 ]]; then
+  echo "$LOG_TAG FAILED steps (${#FAILURES[@]}):" >&2
+  for f in "${FAILURES[@]}"; do
+    echo "$LOG_TAG   - $f" >&2
+  done
   exit 1
 fi
 
-export RESTIC_PASSWORD_FILE="$PASSFILE"
-
-if [[ ! -f "$REPOS_CONF" ]]; then
-  echo "$LOG_TAG No repos configured ($REPOS_CONF). Skipping restic backup."
-  exit 0
-fi
-
-while IFS= read -r repo; do
-  [[ -z "$repo" ]] && continue
-  [[ "$repo" =~ ^# ]] && continue
-
-  export RESTIC_REPOSITORY="$repo"
-
-  if command -v ui_run >/dev/null 2>&1; then
-    ui_notify "Restic -> $RESTIC_REPOSITORY"
-    ui_run "restic backup -> ${RESTIC_REPOSITORY}" -- restic backup "${STACK_DIR}/config" "${STACK_DIR}/backup" --tag homeassistant || true
-    ui_run "restic forget -> ${RESTIC_REPOSITORY}" -- restic forget --keep-daily 7 --keep-weekly 10 --prune || true
-  else
-    echo "$LOG_TAG Restic backup to: $RESTIC_REPOSITORY"
-    restic backup "${STACK_DIR}/config" "${STACK_DIR}/backup" --tag homeassistant
-
-    echo "$LOG_TAG Retention (daily=7 weekly=10) on: $RESTIC_REPOSITORY"
-    restic forget --keep-daily 7 --keep-weekly 10 --prune
-  fi
-
-done < "$REPOS_CONF"
-
-# Nettoyage des dumps locaux très anciens (au cas où restic n'est pas dispo)
-find "$BACKUP_DIR" -type f -name "postgres-*.sql.gz" -mtime +21 -delete || true
-
-if command -v ui_notify >/dev/null 2>&1; then
-  ui_notify "Backup terminé" ok
-else
-  echo "$LOG_TAG Done."
-fi
+echo "$LOG_TAG Done."

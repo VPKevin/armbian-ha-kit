@@ -28,6 +28,38 @@ detect_docker_subnet() {
   echo "${subnet:-$DOCKER_SUBNET_DEFAULT}"
 }
 
+# Base des trusted_proxies de HA : l'IP statique de Caddy (CADDY_STATIC_IP,
+# figée dans docker-compose.yml) si connue — n'importe quel autre conteneur du
+# subnet ne peut alors plus spoofer X-Forwarded-For (audit §1.6). À défaut
+# (installations antérieures sans la clé), on retombe sur le subnet complet.
+ha_trusted_base() {
+  local ip="${CADDY_STATIC_IP:-}"
+  if [[ -z "${ip:-}" && -n "${ENV_FILE:-}" && -f "${ENV_FILE}" ]]; then
+    ip="$(env_get "CADDY_STATIC_IP" "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -n "${ip:-}" ]]; then
+    echo "$ip"
+  else
+    detect_docker_subnet
+  fi
+}
+
+# Encode une chaîne pour un composant d'URL (user/password du db_url) : un mot
+# de passe contenant @ : / # ? casserait l'URL du recorder sinon. Byte-wise
+# (LC_ALL=C) pour rester correct sur les caractères multi-octets.
+urlencode() {
+  local LC_ALL=C
+  local s="$1" out="" c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) printf -v c '%%%02X' "'$c"; out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 build_homeassistant_trusted_lines() {
   local subnet="$1" extra_trusted="${2:-}" line trusted_csv trusted_lines=""
 
@@ -114,10 +146,16 @@ ensure_homeassistant_trusted_proxies() {
 
   if ! ha_has_http_block "$cfg"; then
     # Aucun bloc http : on l'ajoute en entier en fin de fichier.
+    # ip_ban/login_attempts : protection brute-force intégrée de HA — HA reste
+    # accessible en HTTP sur tout le LAN (network_mode: host), et exposé sur
+    # Internet si UPnP/Caddy sont actifs (audit §1.7). Ajouté uniquement à la
+    # création du bloc, jamais imposé sur un bloc http existant.
     {
       printf '\n'
       printf 'http:\n'
       printf '  use_x_forwarded_for: true\n'
+      printf '  ip_ban_enabled: true\n'
+      printf '  login_attempts_threshold: 5\n'
       printf '  trusted_proxies:\n'
       printf '%b\n' "$trusted_lines"
     } >> "$cfg"
@@ -138,8 +176,8 @@ ensure_homeassistant_trusted_proxies() {
 
 configure_homeassistant_yaml() {
   local cfg="${STACK_DIR}/config/configuration.yaml"
-  local subnet extra_trusted trusted_lines
-  subnet="$(detect_docker_subnet)"
+  local trusted_base extra_trusted trusted_lines
+  trusted_base="$(ha_trusted_base)"
 
   if [[ ! -f "$cfg" ]]; then
     touch "$cfg"
@@ -157,14 +195,19 @@ configure_homeassistant_yaml() {
     extra_trusted="$(env_csv_normalize_for_key "PROXY_TRUSTED_PROXIES" "$extra_trusted")"
   fi
 
-  trusted_lines="$(build_homeassistant_trusted_lines "$subnet" "$extra_trusted")"
+  trusted_lines="$(build_homeassistant_trusted_lines "$trusted_base" "$extra_trusted")"
 
   # 1) recorder : ajouté seulement s'il manque (ne réécrit jamais l'existant).
+  #    user/password URL-encodés : un mot de passe contenant @ : / # ? etc.
+  #    casserait l'URL sinon (audit §1.5).
   if ! grep -q "^recorder:" "$cfg"; then
+    local db_user db_pass
+    db_user="$(urlencode "$POSTGRES_USER")"
+    db_pass="$(urlencode "$POSTGRES_PASSWORD")"
     cat >> "$cfg" <<EOF
 
 recorder:
-  db_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
+  db_url: postgresql://${db_user}:${db_pass}@127.0.0.1:5432/${POSTGRES_DB}
 EOF
   fi
 

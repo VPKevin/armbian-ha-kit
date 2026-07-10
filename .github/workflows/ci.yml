@@ -1,0 +1,57 @@
+# CI armbian-ha-kit : lint shell + tests bats.
+# - shellcheck est BLOQUANT (le repo est à 0 warning — audit §P2).
+# - shfmt est informatif (continue-on-error) tant que le formatage historique
+#   n'a pas été normalisé.
+# - bats tourne en root (backup.sh exige root) ; l'absence de TTY fait
+#   basculer les helpers UI en mode non-interactif (is_interactive_tty).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+      - name: shellcheck (bloquant, -S warning)
+        run: |
+          shellcheck -S warning bootstrap.sh ha-backup.sh ha-upnp.sh \
+            scripts/*.sh scripts/lib/*.sh tests/*.sh
+
+  shfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shfmt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shfmt
+      - name: shfmt (informatif — diff de formatage, ne bloque jamais)
+        # Le formatage historique du repo n'est pas normalisé : on affiche le
+        # diff en warning sans faire échouer le job (un continue-on-error au
+        # niveau job laisserait quand même une croix rouge sur la PR).
+        run: |
+          if ! shfmt -d -i 2 -ci bootstrap.sh ha-backup.sh ha-upnp.sh \
+            scripts/*.sh scripts/lib/*.sh tests/*.sh; then
+            echo "::warning::shfmt: formatage non normalisé (informatif, voir le diff ci-dessus)"
+          fi
+
+  bats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats whiptail restic gzip procps
+      - name: bats (root, non-interactif)
+        run: |
+          sudo bats tests/install_env.bats tests/backup.bats \
+            tests/restic_choose_repo_no_repo.bats tests/restore.bats

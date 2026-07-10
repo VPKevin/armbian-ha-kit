@@ -26,12 +26,21 @@ printf '%s\n' "whiptail $*" >>"${WHIPTAIL_LOG}"
 
 case "$*" in
   *--inputbox*)
-    # Dernier argument = valeur par défaut
-    echo "${@: -1}"
+    # whiptail écrit la valeur saisie sur STDERR (d'où le swap 3>&1 1>&2 2>&3
+    # dans ui.sh). Le stub doit faire pareil pour être capturé par whi_input.
+    # La valeur par défaut est le 4e argument après --inputbox
+    # (--inputbox <prompt> <h> <w> <default>).
+    args=("$@")
+    for i in "${!args[@]}"; do
+      if [[ "${args[$i]}" == "--inputbox" ]]; then
+        echo "${args[$((i + 4))]:-}" >&2
+        break
+      fi
+    done
     exit 0
     ;;
   *--passwordbox*)
-    echo "secret"
+    echo "secret" >&2
     exit 0
     ;;
   *--yesno*)
@@ -81,6 +90,161 @@ test_install_sh_loaded() {
   export COMPOSE_PATH="$DEFAULT_COMPOSE_PATH"
 
   mkdir -p "$STACK_DIR"
+}
+
+@test "env_get retourne la valeur seule, sans le préfixe KEY=" {
+  test_install_sh_loaded
+
+  printf 'FOO=bar\nENABLE_CADDY=0\n' >"$ENV_FILE"
+
+  run env_get "ENABLE_CADDY" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run env_get "FOO" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "bar" ]
+}
+
+@test "env_get préserve les '=' contenus dans la valeur" {
+  test_install_sh_loaded
+
+  printf 'DB_URL=postgresql://u:p=x@host/db?sslmode=disable\n' >"$ENV_FILE"
+
+  run env_get "DB_URL" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "postgresql://u:p=x@host/db?sslmode=disable" ]
+}
+
+@test "env_get tolère les espaces de tête et retourne 1 si clé absente" {
+  test_install_sh_loaded
+
+  printf '  FOO=bar\n' >"$ENV_FILE"
+
+  run env_get "FOO" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "bar" ]
+
+  run env_get "MISSING" "$ENV_FILE"
+  [ "$status" -eq 1 ]
+}
+
+@test "env_get ne matche pas une clé préfixe d'une autre clé" {
+  test_install_sh_loaded
+
+  printf 'POSTGRES_USER_EXTRA=x\nPOSTGRES_USER=ha\n' >"$ENV_FILE"
+
+  run env_get "POSTGRES_USER" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha" ]
+}
+
+@test "env_get + strip_key_prefix_if_any nettoient une valeur héritée polluée KEY=KEY=value" {
+  test_install_sh_loaded
+
+  # D'anciennes versions (bug env_get pré-correctif) ont pu écrire des valeurs
+  # polluées dans des .env déployés : le strip côté appelant doit rester
+  # opérationnel pour les assainir.
+  printf 'HA_DOMAIN=HA_DOMAIN=ha.example.com\n' >"$ENV_FILE"
+
+  run env_get "HA_DOMAIN" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "HA_DOMAIN=ha.example.com" ]
+
+  run strip_key_prefix_if_any "HA_DOMAIN" "HA_DOMAIN=ha.example.com"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha.example.com" ]
+}
+
+@test "env_set_kv quote les valeurs spéciales : sourcing bash sûr et env_get symétrique" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  local evil='pa$s; touch /tmp/pwned$(id) & echo'
+
+  run env_set_kv "POSTGRES_PASSWORD" "$evil" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  # La ligne écrite est single-quotée
+  run grep -F "POSTGRES_PASSWORD='" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  # env_get restitue la valeur exacte (sans les quotes)
+  run env_get "POSTGRES_PASSWORD" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$evil" ]
+
+  # Le sourcing bash restitue la même valeur SANS exécuter quoi que ce soit
+  run bash -c "set -a; . '$ENV_FILE'; printf '%s' \"\$POSTGRES_PASSWORD\""
+  [ "$status" -eq 0 ]
+  [ "$output" = "$evil" ]
+  [ ! -e /tmp/pwned ]
+}
+
+@test "env_set_kv n'ajoute pas de quotes aux valeurs simples (rétrocompatibilité)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  run env_set_kv "TZ" "Europe/Paris" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  run grep -E "^TZ=Europe/Paris$" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "env_set_kv retire les apostrophes (non représentables bash+compose)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  run env_set_kv "HA_DOMAIN" "l'apostrophe d'ici" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  run env_get "HA_DOMAIN" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "lapostrophe dici" ]
+}
+
+@test "urlencode encode les caractères réservés d'URL" {
+  test_install_sh_loaded
+
+  run urlencode 'p@ss:w/rd#1?&='
+  [ "$status" -eq 0 ]
+  [ "$output" = "p%40ss%3Aw%2Frd%231%3F%26%3D" ]
+
+  run urlencode 'Simple123.~_-'
+  [ "$output" = "Simple123.~_-" ]
+}
+
+@test "configure_homeassistant_yaml URL-encode user/password dans le db_url du recorder" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  : >"$ENV_FILE"
+  export POSTGRES_USER="ha"
+  export POSTGRES_DB="homeassistant"
+  export POSTGRES_PASSWORD='p@ss:w#1'
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F 'db_url: postgresql://ha:p%40ss%3Aw%231@127.0.0.1:5432/homeassistant' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "configure_homeassistant_yaml truste l'IP statique de Caddy quand CADDY_STATIC_IP est définie" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  printf 'CADDY_STATIC_IP=172.30.0.10\n' >"$ENV_FILE"
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F '    - 172.30.0.10' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  # le subnet complet n'est plus trusté
+  run grep -F '172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -ne 0 ]
 }
 
 @test "env_set_kv ajoute une clé sans supprimer les autres" {
@@ -270,6 +434,248 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "prepare_zigbee2mqtt_stack active l'auth MQTT par défaut sur une installation neuve" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'allow_anonymous false' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file /mosquitto/config/passwd' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+
+  run env_get "MQTT_AUTH" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+  run env_get "MQTT_USER" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ha" ]
+  run env_get "MQTT_PASSWORD" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+
+  run grep -E "^  user: 'ha'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -E "^  password: '.+'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack n'active PAS l'auth sur une stack héritée sans auth (migration explicite)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/mosquitto/config"
+  cat >"$STACK_DIR/mosquitto/config/mosquitto.conf" <<'EOF'
+# Managed by armbian-ha-kit
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
+listener 1883 0.0.0.0
+allow_anonymous true
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'allow_anonymous true' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -ne 0 ]
+
+  run env_get "MQTT_AUTH" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+
+  run grep -E "^  (user|password):" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack respecte des credentials MQTT existants sans les régénérer (idempotent)" {
+  test_install_sh_loaded
+
+  printf 'MQTT_AUTH=1\nMQTT_USER=bob\nMQTT_PASSWORD=s3cret\n' >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/zigbee2mqtt/data"
+  cat >"$STACK_DIR/zigbee2mqtt/data/configuration.yaml" <<'EOF'
+homeassistant:
+  enabled: true
+mqtt:
+  server: mqtt://mqtt:1883
+  base_topic: custom_z2m
+serial:
+  port: /dev/ttyACM0
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+  # Deuxième passage pour vérifier l'idempotence (pas de doublons)
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run env_get "MQTT_PASSWORD" "$ENV_FILE"
+  [ "$output" = "s3cret" ]
+
+  run grep -c "^  user: 'bob'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$output" = "1" ]
+  run grep -c "^  password: 's3cret'$" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$output" = "1" ]
+  # Les autres clés du bloc mqtt sont préservées
+  run grep -F 'base_topic: custom_z2m' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+  run grep -F 'server: mqtt://mqtt:1883' "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "prepare_zigbee2mqtt_stack ne touche jamais une conf mosquitto non gérée par le kit" {
+  test_install_sh_loaded
+
+  printf 'MQTT_AUTH=1\n' >"$ENV_FILE"
+  mkdir -p "$STACK_DIR/mosquitto/config"
+  cat >"$STACK_DIR/mosquitto/config/mosquitto.conf" <<'EOF'
+# Config perso de l'utilisateur
+listener 1883
+allow_anonymous true
+EOF
+
+  run prepare_zigbee2mqtt_stack "/dev/ttyACM0" "ember"
+  [ "$status" -eq 0 ]
+
+  run grep -F '# Config perso de l'"'"'utilisateur' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -eq 0 ]
+  run grep -F 'password_file' "$STACK_DIR/mosquitto/config/mosquitto.conf"
+  [ "$status" -ne 0 ]
+  # Et on n'injecte pas de creds dans Z2M (le kit ne gère pas ce broker)
+  run grep -E "^  (user|password):" "$STACK_DIR/zigbee2mqtt/data/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
+@test "file_mtime retourne l'epoch d'un fichier et échoue sur un fichier absent" {
+  test_install_sh_loaded
+
+  local f="$TMPDIR/mtime-test"
+  touch "$f"
+
+  run file_mtime "$f"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+$ ]]
+
+  run file_mtime "$TMPDIR/does-not-exist"
+  [ "$status" -ne 0 ]
+}
+
+@test "mounts_state_add trace les mountpoints sans doublon" {
+  test_install_sh_loaded
+  export AHK_STATE_DIR="$TMPDIR/state"
+
+  mounts_state_add "/mnt/nasbackup"
+  mounts_state_add "/mnt/usbbackup"
+  mounts_state_add "/mnt/nasbackup"
+
+  run mounts_state_list
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "$output" == *"/mnt/nasbackup"* ]]
+  [[ "$output" == *"/mnt/usbbackup"* ]]
+}
+
+@test "uninstall_cleanup_fstab retire les montages du kit et préserve le reste" {
+  test_install_sh_loaded
+  export AHK_STATE_DIR="$TMPDIR/state"
+  export FSTAB_PATH="$TMPDIR/fstab"
+
+  # mountpoint custom tracé par l'état (installation récente)
+  mounts_state_add "/mnt/custom-nas"
+
+  cat >"$FSTAB_PATH" <<EOF
+UUID=root-uuid  /  ext4  defaults  0  1
+//nas/share  /mnt/custom-nas  cifs  credentials=${SAMBA_CREDS},nofail  0  0
+UUID=aaaa-bbbb  /mnt/usbbackup  auto  nofail,x-systemd.automount  0  2
+//other/share  /mnt/perso  cifs  credentials=/etc/samba/creds-perso  0  0
+EOF
+
+  run uninstall_cleanup_fstab
+  [ "$status" -eq 0 ]
+
+  # les lignes du kit ont disparu (état + défaut historique)
+  run grep -F '/mnt/custom-nas' "$FSTAB_PATH"
+  [ "$status" -ne 0 ]
+  run grep -F '/mnt/usbbackup' "$FSTAB_PATH"
+  [ "$status" -ne 0 ]
+  # les lignes de l'utilisateur sont intactes
+  run grep -F 'UUID=root-uuid' "$FSTAB_PATH"
+  [ "$status" -eq 0 ]
+  run grep -F '/mnt/perso' "$FSTAB_PATH"
+  [ "$status" -eq 0 ]
+}
+
+@test "upnp_map_port réussit, résout les conflits, et échoue proprement sans IGD" {
+  test_install_sh_loaded
+
+  # stub upnpc piloté par UPNPC_MODE
+  cat >"$TMPDIR/bin/upnpc" <<'EOF'
+#!/usr/bin/env bash
+case "${UPNPC_MODE:-ok}" in
+  ok)
+    echo "external 1.2.3.4:80 TCP is redirected to internal 192.168.1.42:80"
+    ;;
+  conflict-once)
+    if [[ "$1" == "-d" ]]; then exit 0; fi
+    if [[ -f "${UPNPC_STATE}" ]]; then
+      echo "external 1.2.3.4:80 TCP is redirected to internal 192.168.1.42:80"
+    else
+      touch "${UPNPC_STATE}"
+      echo "AddPortMapping(80, 80, 192.168.1.42) failed with code 718 (ConflictInMappingEntry)"
+    fi
+    ;;
+  noigd)
+    echo "No IGD UPnP Device found on the network !"
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$TMPDIR/bin/upnpc"
+
+  export UPNPC_MODE=ok
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -eq 0 ]
+
+  export UPNPC_MODE=conflict-once UPNPC_STATE="$TMPDIR/upnpc-state"
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -eq 0 ]
+
+  export UPNPC_MODE=noigd
+  run upnp_map_port "192.168.1.42" 80
+  [ "$status" -ne 0 ]
+}
+
+@test "upnp_lan_ip extrait l'IP source de 'ip route get'" {
+  test_install_sh_loaded
+
+  cat >"$TMPDIR/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+echo "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.42 uid 0"
+EOF
+  chmod +x "$TMPDIR/bin/ip"
+
+  run upnp_lan_ip
+  [ "$status" -eq 0 ]
+  [ "$output" = "192.168.1.42" ]
+}
+
+@test "setup_restic_password (non-interactif) crée le fichier de mot de passe en 600" {
+  test_install_sh_loaded
+
+  run setup_restic_password
+  [ "$status" -eq 0 ]
+  [ -f "$RESTIC_PASS" ]
+  [ -s "$RESTIC_PASS" ]
+
+  run stat -c %a "$RESTIC_PASS"
+  [ "$output" = "600" ]
+}
+
 @test "env_csv_normalize_for_key nettoie les préfixes parasites, espaces et doublons" {
   test_install_sh_loaded
 
@@ -287,7 +693,8 @@ EOF
   run configure_homeassistant_yaml
   [ "$status" -eq 0 ]
 
-  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  # Subnet applicatif figé (DOCKER_SUBNET, défaut 172.30.0.0/24) — cf. ha.sh.
+  run grep -F '    - 172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
@@ -316,7 +723,8 @@ EOF
   run configure_homeassistant_yaml
   [ "$status" -eq 0 ]
 
-  run grep -F '    - 172.18.0.0/16' "$STACK_DIR/config/configuration.yaml"
+  # Subnet applicatif figé (DOCKER_SUBNET, défaut 172.30.0.0/24) — cf. ha.sh.
+  run grep -F '    - 172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]
   run grep -F '    - 192.168.1.150' "$STACK_DIR/config/configuration.yaml"
   [ "$status" -eq 0 ]

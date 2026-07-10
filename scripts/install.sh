@@ -34,6 +34,8 @@ source "${SCRIPT_DIR}/lib/backup_targets.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/systemd.sh"
 # shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/upnp.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/health.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/lib/uninstall.sh"
@@ -187,7 +189,7 @@ prompt_features() {
       ans="$(whi_yesno_back "Exposition" "UPnP est actuellement activé. Le laisser activé ?\n\nUPnP peut ouvrir des ports sur ta box automatiquement." "yes")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     else
-      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports) ?\n\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
+      ans="$(whi_yesno_back "Exposition" "Activer l'UPnP (ouverture automatique des ports 80/443 sur ta box) ?\n\nATTENTION : ceci EXPOSE Home Assistant sur Internet (via Caddy/HTTPS).\nSi tu gères déjà les ports (ou un proxy), réponds Non." "no")" || return $?
       [[ "$ans" == "yes" ]] && enable_upnp=1 || enable_upnp=0
     fi
   fi
@@ -256,7 +258,7 @@ EOF
 
 show_summary_and_edit() {
   local docker_subnet
-  docker_subnet="$(detect_docker_subnet)"
+  docker_subnet="$(ha_trusted_base)"
 
   local repos_lines="  (aucun)"
   if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then
@@ -284,7 +286,8 @@ show_summary_and_edit() {
   local zigbee_selected="${ZIGBEE_DEVICE_PATH:-/dev/ttyUSB0}"
   local zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
   local zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
-  local zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
+  local zigbee_adapter
+  zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
 
   local env_preview="  (fichier absent)"
   if [[ -f "$ENV_FILE" ]]; then
@@ -328,6 +331,13 @@ Zigbee
   - exposé à HA       : ${zigbee_ha_device}
   - adaptateur Z2M    : ${zigbee_adapter}
 $(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then printf '%s\n' '  - UI locale         : http://127.0.0.1:8099'; fi)
+$(if [[ "$zigbee_mode" == "zigbee2mqtt" ]]; then
+    if [[ "$(mqtt_auth_state_get)" == "1" ]]; then
+      printf '%s\n' "  - MQTT auth         : oui (user: ${MQTT_USER:-ha}, mot de passe dans .env)"
+    else
+      printf '%s\n' '  - MQTT auth         : non (connexions anonymes)'
+    fi
+  fi)
 EOF
 )
 
@@ -683,6 +693,7 @@ main() {
         fi
 
         configure_homeassistant_yaml
+        setup_upnp || true
         if start_stack; then
           if wait_for_health 240; then
             whi_info "Installation" "Installation terminée.\n\nStack démarrée et healthy.\n\nCommandes utiles:\n  cd $STACK_DIR\n  docker compose -f $COMPOSE_PATH ps\n  docker compose -f $COMPOSE_PATH logs -f"
