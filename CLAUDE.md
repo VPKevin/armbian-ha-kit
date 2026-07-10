@@ -48,8 +48,8 @@ timer systemd. Tout est en bash, cible = box ARM en root.
   le swap `3>&1 1>&2 2>&3` dans ui.sh) — tout stub de test doit faire pareil.
 - Le `.env` est à la fois sourcé par bash ET parsé par docker compose : les
   deux parsers divergent sur les quotes/caractères spéciaux.
-- `wait_for_health`/`status.sh` dupliquent le mapping service→conteneur ; toute
-  modif doit être faite aux 3 endroits (ou factorisée, cf. audit).
+- Le mapping service→conteneur est factorisé dans `container_name_for_service`
+  (common.sh) : tout nouveau conteneur du compose doit y être ajouté.
 - whiptail exige un TTY : `install.sh` fait `exec </dev/tty` ; le mode headless
   n'est pas vraiment supporté aujourd'hui.
 
@@ -82,4 +82,8 @@ Résumé des priorités (maj 2026-07-03) :
    healthcheck Caddy sur /healthz (bloc :80 avec handle — l'ordre des
    directives Caddy n'est PAS celui du fichier) ; zigbee2mqtt épinglé :2 ;
    Caddy en IP figée (CADDY_STATIC_IP) seule trustée par HA.
-6. Ajouter une CI GitHub Actions : shellcheck + shfmt + bats.
+6. ✅ FAIT — CI GitHub Actions (.github/workflows/ci.yml) : shellcheck
+   BLOQUANT (repo à 0 warning — le maintenir), shfmt informatif, bats root
+   avec restic réel (dont tests/restore.bats). Fait aussi : HSTS sans
+   preload, .env exclu de bootstrap --local, ip_ban HA, mapping
+   service→conteneur factorisé.

@@ -58,7 +58,8 @@ init_restic_repo() {
 }
 
 setup_restic_password() {
-  RESTIC_PROMPTED=0
+  # Signal lu par install.sh (step_restic)
+  export RESTIC_PROMPTED=0
   mkdir -p "$RESTIC_DIR"
   if [[ -f "$RESTIC_PASS" ]]; then
     return 0

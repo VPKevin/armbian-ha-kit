@@ -20,7 +20,9 @@
 	encode gzip zstd
 
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		# Pas de "preload" par défaut : l'inscription sur la preload list HSTS
+		# est un engagement quasi irréversible pour tout le domaine.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"

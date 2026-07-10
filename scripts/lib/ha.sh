@@ -146,10 +146,16 @@ ensure_homeassistant_trusted_proxies() {
 
   if ! ha_has_http_block "$cfg"; then
     # Aucun bloc http : on l'ajoute en entier en fin de fichier.
+    # ip_ban/login_attempts : protection brute-force intégrée de HA — HA reste
+    # accessible en HTTP sur tout le LAN (network_mode: host), et exposé sur
+    # Internet si UPnP/Caddy sont actifs (audit §1.7). Ajouté uniquement à la
+    # création du bloc, jamais imposé sur un bloc http existant.
     {
       printf '\n'
       printf 'http:\n'
       printf '  use_x_forwarded_for: true\n'
+      printf '  ip_ban_enabled: true\n'
+      printf '  login_attempts_threshold: 5\n'
       printf '  trusted_proxies:\n'
       printf '%b\n' "$trusted_lines"
     } >> "$cfg"

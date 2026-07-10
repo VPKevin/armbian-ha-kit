@@ -69,7 +69,8 @@ zigbee_selected_port_get() {
 }
 
 zigbee_resolve_serial_port() {
-  local selected_port="$(zigbee_default_serial_port "${1:-}")"
+  local selected_port
+  selected_port="$(zigbee_default_serial_port "${1:-}")"
   local resolved
 
   resolved="$(readlink -f "$selected_port" 2>/dev/null || printf '%s' "$selected_port")"
@@ -101,7 +102,7 @@ zigbee_infer_adapter_from_port() {
     *skyconnect*|*zbdongle-e*|*dongle_plus_v2*|*efr32*|*ezsp*|*ember*|*nabu_casa*)
       printf '%s' "ember"
       ;;
-    *zbdongle-p*|*cc2652*|*slaesh*|*sonoff*plus*|*sonoff*cc2652*)
+    *zbdongle-p*|*cc2652*|*slaesh*|*sonoff*plus*)
       printf '%s' "zstack"
       ;;
     *)
@@ -179,7 +180,8 @@ EOF
 
 zigbee_choose_serial_port() {
   local title="$1"
-  local current_port="$(zigbee_default_serial_port "${2:-}")"
+  local current_port
+  current_port="$(zigbee_default_serial_port "${2:-}")"
   local -a choices=()
   local dev label selected rc
   local current_present=0
@@ -247,7 +249,8 @@ zigbee_homeassistant_device_for_mode() {
 sync_zigbee_env() {
   local mode="$1"
   local selected_port="${2:-}"
-  local adapter="$(zigbee_adapter_normalize "${3:-}")"
+  local adapter
+  adapter="$(zigbee_adapter_normalize "${3:-}")"
   local serial_port ha_device
 
   selected_port="$(zigbee_default_serial_port "$selected_port")"

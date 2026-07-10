@@ -187,10 +187,12 @@ env_ensure_from_compose() {
   [[ -z "$vars" ]] && return 0
 
   set -a
+  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
 
-  ENV_PROMPTED=0
+  # Signal lu par install.sh (step_setup_env)
+  export ENV_PROMPTED=0
 
   while IFS=$'\t' read -r name def; do
     [[ -z "${name:-}" ]] && continue
@@ -209,6 +211,7 @@ env_ensure_from_compose() {
   done <<< "$vars"
 
   set -a
+  # shellcheck disable=SC1090
   . "$ENV_FILE" 2>/dev/null || true
   set +a
   return 0

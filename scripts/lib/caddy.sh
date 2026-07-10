@@ -10,7 +10,8 @@ set -euo pipefail
 # - Codes retour: 0 succès, UI_BACK/UI_ABORT ou code non-zero en cas d'erreur.
 
 prompt_caddy_domain() {
-  CADDY_PROMPTED=0
+  # Signal lu par install.sh (step_caddy)
+  export CADDY_PROMPTED=0
   # Demande uniquement si Caddy est activé.
   local enable_caddy="${ENABLE_CADDY:-}"
   if [[ -z "${enable_caddy:-}" ]]; then

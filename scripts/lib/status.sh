@@ -114,14 +114,7 @@ compose_ps_compact() {
       if [[ -n "${cid:-}" ]]; then
         name="$cid"
       else
-        case "$svc" in
-          postgres) name="ha-postgres" ;;
-          homeassistant) name="homeassistant" ;;
-          caddy) name="ha-caddy" ;;
-          mqtt) name="ha-mqtt" ;;
-          zigbee2mqtt) name="ha-zigbee2mqtt" ;;
-          *) name="$svc" ;;
-        esac
+        name="$(container_name_for_service "$svc")"
       fi
 
       state="$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null || echo "missing")"

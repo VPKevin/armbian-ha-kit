@@ -286,7 +286,8 @@ show_summary_and_edit() {
   local zigbee_selected="${ZIGBEE_DEVICE_PATH:-/dev/ttyUSB0}"
   local zigbee_dongle="${ZIGBEE_SERIAL_PORT:-/dev/ttyUSB0}"
   local zigbee_ha_device="${HOMEASSISTANT_ZIGBEE_DEVICE:-/dev/null}"
-  local zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
+  local zigbee_adapter
+  zigbee_adapter="$(zigbee_adapter_label "${ZIGBEE_ADAPTER:-none}")"
 
   local env_preview="  (fichier absent)"
   if [[ -f "$ENV_FILE" ]]; then

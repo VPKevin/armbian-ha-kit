@@ -104,6 +104,21 @@ mounts_state_list() {
   grep -Ev '^[[:space:]]*($|#)' "$f" 2>/dev/null || true
 }
 
+# Nom de conteneur par défaut pour un service compose — fallback quand
+# `docker compose ps -q` ne répond pas. Source UNIQUE du mapping
+# service→conteneur (utilisé par health.sh et status.sh) : toute modification
+# des container_name du docker-compose.yml doit se refléter ici.
+container_name_for_service() {
+  case "$1" in
+    postgres) echo "ha-postgres" ;;
+    homeassistant) echo "homeassistant" ;;
+    caddy) echo "ha-caddy" ;;
+    mqtt) echo "ha-mqtt" ;;
+    zigbee2mqtt) echo "ha-zigbee2mqtt" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 apt_is_installed() {
   local pkg="$1"
   # Premièrement, interroger dpkg-query (précis).
@@ -206,16 +221,18 @@ load_env_file() {
 # Trap d'erreur standardisable pour les scripts principaux.
 install_error_trap() {
   local src="${1:-unknown}"
+  # shellcheck disable=SC2154  # rc est assigné dans la chaîne du trap à l'exécution
   trap 'rc=$?; log_error "Echec (${src}) a la ligne ${LINENO} (rc=${rc})"; exit "$rc"' ERR
 }
 
-# Standard return codes (small set pour les scripts)
-RC_OK=0            # réussite
-RC_ERR=1           # erreur générique
-RC_MISUSE=2        # mauvaise utilisation / arguments invalides
-RC_NOT_ROOT=3      # nécessite root
-RC_MISSING_DEP=4   # dépendances manquantes
-RC_PRECHECK=5      # pré-checks échoués
+# Standard return codes (small set pour les scripts) — exportés car
+# consommés par tous les scripts qui sourcent ce module.
+export RC_OK=0            # réussite
+export RC_ERR=1           # erreur générique
+export RC_MISUSE=2        # mauvaise utilisation / arguments invalides
+export RC_NOT_ROOT=3      # nécessite root
+export RC_MISSING_DEP=4   # dépendances manquantes
+export RC_PRECHECK=5      # pré-checks échoués
 
 # Retour standardisé et logging
 # usage: rc_fail "message" [code]

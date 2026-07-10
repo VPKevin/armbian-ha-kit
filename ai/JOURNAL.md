@@ -204,3 +204,26 @@ Format d'entrée (obligatoire):
   - `docker compose config` : ipv4_address 172.30.0.10 + image :2 résolues, config valide.
   - shellcheck : 0 nouveau warning.
 - Commentaires / next steps: audit §1.5, §1.6, §3.4, §3.5 marqués TRAITÉS. Migration : le resserrage trusted_proxies s'applique au premier re-run une fois CADDY_STATIC_IP écrite dans .env (recréation du conteneur caddy nécessaire pour prendre l'IP figée : docker compose up -d --force-recreate caddy). Étape suivante (§6.6) : CI GitHub Actions (shellcheck + shfmt + bats), test de restore dans le smoke, HSTS sans preload, exclusion .env de bootstrap --local, dédup mapping service→conteneur.
+
+---
+
+- Date: 2026-07-05
+- Auteur: Claude (Fable 5)
+- Type: code + test + infra + build
+- Impact: P1/P2
+- Résumé court: Étape 6 de l'audit — CI GitHub Actions (shellcheck bloquant, repo assaini à 0 warning), test de restore réel, HSTS sans preload, .env exclu de bootstrap --local, ip_ban HA, mapping service→conteneur factorisé. Bats 39/39.
+- Détails:
+  - Assainissement shellcheck (préalable à une CI bloquante) : SC2155 corrigés (declare/assign séparés dans install.sh + zigbee.sh ×3), SC2221/SC2222 (pattern case redondant *sonoff*cc2652* couvert par *cc2652*), SC2046 (quote docker --version dans run-smoke.sh), signaux inter-scripts exportés (CADDY_PROMPTED, ENV_PROMPTED, RESTIC_PROMPTED, RC_*) au lieu de flagués unused, directives SC1090/SC2154 sur les faux positifs (source non-constant, rc dans la chaîne du trap). Résultat : shellcheck -S warning à ZÉRO sur tout le repo.
+  - `.github/workflows/ci.yml` : 3 jobs — shellcheck BLOQUANT ; shfmt informatif (continue-on-error, formatage historique non normalisé) ; bats en root (backup.sh exige root) avec whiptail+restic réels sur les 4 fichiers de tests.
+  - `tests/restore.bats` : cycle complet backup réel (scripts/backup.sh) → suppression de config/ → restic restore latest → contenu identique (configuration.yaml, secrets.yaml, dump postgres inclus dans le snapshot). Skip propre si restic absent.
+  - `tests/restic_choose_repo_no_repo.bats` : dé-hardcodé (cd /repo → racine dérivée de BATS_TEST_FILENAME ; bash -lc → bash -c pour ne pas perdre le PATH des stubs) — prérequis CI.
+  - `Caddyfile` : preload retiré du header HSTS (engagement quasi irréversible pour le domaine).
+  - `bootstrap.sh` : --local exclut désormais ./.env (vrais secrets du repo de dev), .idea, .DS_Store du tar de synchro. Validé E2E (fichiers absents de la cible après sync).
+  - `scripts/lib/common.sh` : container_name_for_service — source unique du mapping service→conteneur, remplace les 3 duplications (health.sh ×2, status.sh ×1).
+  - `scripts/lib/ha.sh` : ip_ban_enabled: true + login_attempts_threshold: 5 dans le bloc http: quand le kit le CRÉE (jamais imposé sur un bloc existant) — protection brute-force, HA restant exposé en HTTP sur le LAN (host mode) et sur Internet si UPnP actif (audit §1.7 partiel).
+- Tests:
+  - bats (debian:bookworm, restic réel) : **39/39 ok** dont le nouveau cycle backup→restore.
+  - shellcheck -S warning : 0 sur bootstrap.sh, ha-backup.sh, ha-upnp.sh, scripts/*.sh, scripts/lib/*.sh, tests/*.sh.
+  - ci.yml : YAML validé.
+  - E2E bootstrap --local : .env/.idea non copiés vers la cible, scripts bien synchronisés.
+- Commentaires / next steps: audit §6 quasi soldé. Nice-to-have restants (notés en §6.6 de l'audit) : SHA256SUMS par release, refresh_summary_state (install.sh), harmonisation chmod 700/750, OnFailure= notification backup, restic check périodique, mode headless complet (§3.8). La CI devra passer au premier push de la branche audit/etapes-1-4.

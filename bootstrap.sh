@@ -183,8 +183,10 @@ sync_from_dir() {
       tar_exclude_args+=(--exclude="${d}")
     fi
   done
-  # Exclut .git en source locale (absent des archives GitHub).
-  tar_exclude_args+=(--exclude=".git")
+  # Exclut .git en source locale (absent des archives GitHub), ainsi que le
+  # .env du repo de dev (contient de vrais secrets locaux — ne doit JAMAIS
+  # partir sur la cible) et les artefacts d'IDE/OS.
+  tar_exclude_args+=(--exclude=".git" --exclude="./.env" --exclude=".idea" --exclude=".DS_Store")
 
   # Stream source tree into target (overwrite repo files, skip preserved dirs)
   tar -C "${src_dir}" "${tar_exclude_args[@]}" -cf - . \
