@@ -77,4 +77,9 @@ Résumé des priorités (maj 2026-07-03) :
 4. ✅ FAIT — `file_mtime` défini (common.sh) ; UPnP implémenté (lib/upnp.sh +
    scripts/upnp-renew.sh + ha-upnp.timer 45min, retiré à l'uninstall) ;
    fstab nettoyé à l'uninstall (mounts.list dans l'état + défauts hérités).
-5. Ajouter une CI GitHub Actions : shellcheck + shfmt + bats.
+5. ✅ FAIT — Quoting .env (env_set_kv single-quote les valeurs spéciales,
+   env_get symétrique, apostrophes retirées) ; db_url recorder URL-encodé ;
+   healthcheck Caddy sur /healthz (bloc :80 avec handle — l'ordre des
+   directives Caddy n'est PAS celui du fichier) ; zigbee2mqtt épinglé :2 ;
+   Caddy en IP figée (CADDY_STATIC_IP) seule trustée par HA.
+6. Ajouter une CI GitHub Actions : shellcheck + shfmt + bats.

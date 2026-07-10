@@ -258,7 +258,7 @@ EOF
 
 show_summary_and_edit() {
   local docker_subnet
-  docker_subnet="$(detect_docker_subnet)"
+  docker_subnet="$(ha_trusted_base)"
 
   local repos_lines="  (aucun)"
   if [[ -f "$RESTIC_REPOS" && -s "$RESTIC_REPOS" ]]; then

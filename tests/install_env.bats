@@ -156,6 +156,97 @@ test_install_sh_loaded() {
   [ "$output" = "ha.example.com" ]
 }
 
+@test "env_set_kv quote les valeurs spéciales : sourcing bash sûr et env_get symétrique" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  local evil='pa$s; touch /tmp/pwned$(id) & echo'
+
+  run env_set_kv "POSTGRES_PASSWORD" "$evil" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  # La ligne écrite est single-quotée
+  run grep -F "POSTGRES_PASSWORD='" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  # env_get restitue la valeur exacte (sans les quotes)
+  run env_get "POSTGRES_PASSWORD" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$evil" ]
+
+  # Le sourcing bash restitue la même valeur SANS exécuter quoi que ce soit
+  run bash -c "set -a; . '$ENV_FILE'; printf '%s' \"\$POSTGRES_PASSWORD\""
+  [ "$status" -eq 0 ]
+  [ "$output" = "$evil" ]
+  [ ! -e /tmp/pwned ]
+}
+
+@test "env_set_kv n'ajoute pas de quotes aux valeurs simples (rétrocompatibilité)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  run env_set_kv "TZ" "Europe/Paris" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  run grep -E "^TZ=Europe/Paris$" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "env_set_kv retire les apostrophes (non représentables bash+compose)" {
+  test_install_sh_loaded
+
+  : >"$ENV_FILE"
+  run env_set_kv "HA_DOMAIN" "l'apostrophe d'ici" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+
+  run env_get "HA_DOMAIN" "$ENV_FILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "lapostrophe dici" ]
+}
+
+@test "urlencode encode les caractères réservés d'URL" {
+  test_install_sh_loaded
+
+  run urlencode 'p@ss:w/rd#1?&='
+  [ "$status" -eq 0 ]
+  [ "$output" = "p%40ss%3Aw%2Frd%231%3F%26%3D" ]
+
+  run urlencode 'Simple123.~_-'
+  [ "$output" = "Simple123.~_-" ]
+}
+
+@test "configure_homeassistant_yaml URL-encode user/password dans le db_url du recorder" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  : >"$ENV_FILE"
+  export POSTGRES_USER="ha"
+  export POSTGRES_DB="homeassistant"
+  export POSTGRES_PASSWORD='p@ss:w#1'
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F 'db_url: postgresql://ha:p%40ss%3Aw%231@127.0.0.1:5432/homeassistant' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+}
+
+@test "configure_homeassistant_yaml truste l'IP statique de Caddy quand CADDY_STATIC_IP est définie" {
+  test_install_sh_loaded
+
+  mkdir -p "$STACK_DIR/config"
+  printf 'CADDY_STATIC_IP=172.30.0.10\n' >"$ENV_FILE"
+
+  run configure_homeassistant_yaml
+  [ "$status" -eq 0 ]
+
+  run grep -F '    - 172.30.0.10' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -eq 0 ]
+  # le subnet complet n'est plus trusté
+  run grep -F '172.30.0.0/24' "$STACK_DIR/config/configuration.yaml"
+  [ "$status" -ne 0 ]
+}
+
 @test "env_set_kv ajoute une clé sans supprimer les autres" {
   test_install_sh_loaded
 

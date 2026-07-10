@@ -182,3 +182,25 @@ Format d'entrée (obligatoire):
   - Exécution réelle de scripts/upnp-renew.sh (libs sourcées, .env réel, stubs upnpc/ip) dans les 4 états : désactivé rc=0, actif+Caddy rc=0 avec mappings, actif sans Caddy skip rc=0, IGD absent rc=1 avec message explicite.
   - shellcheck : 0 warning sur les nouveaux fichiers (restent les faux positifs préexistants de common.sh).
 - Commentaires / next steps: audit §2.2, §2.3, §3.6 marqués TRAITÉS. Étape suivante (§6.5) : quoting des valeurs .env (sourcé en root) + URL-encoding du db_url recorder, healthcheck Caddy, pin zigbee2mqtt:2, IP statique Caddy + trusted_proxies /32.
+
+---
+
+- Date: 2026-07-05
+- Auteur: Claude (Fable 5)
+- Type: code + test + infra
+- Impact: P0/P1
+- Résumé court: Étape 5 de l'audit — quoting .env (sourcing root sûr), db_url URL-encodé, healthcheck Caddy /healthz, zigbee2mqtt épinglé :2, Caddy en IP statique seule trustée par HA. Bats 38/38 + E2E compose/Caddy réels.
+- Détails:
+  - `scripts/lib/env.sh` (audit §1.5) : env_set_kv single-quote les valeurs contenant des caractères spéciaux — le single-quote est la seule forme comprise identiquement par bash (sourcing) et par le parser dotenv de docker compose. Apostrophes retirées avec log_warn (irreprésentables de façon compatible dans les deux parsers). env_value_needs_quoting (charset sûr documenté). env_get retire symétriquement les quotes enveloppantes. Valeurs simples inchangées (rétrocompatibilité .env existants).
+  - `scripts/lib/ha.sh` : urlencode() byte-wise (LC_ALL=C) ; db_url du recorder écrit avec user/password URL-encodés (un mot de passe @ : / # ? cassait l'URL) ; ha_trusted_base() — trusted_proxies = CADDY_STATIC_IP si définie, fallback subnet complet pour les .env antérieurs (resserrage automatique au premier re-run).
+  - `docker-compose.yml` : caddy en ipv4_address figée ${CADDY_STATIC_IP:-172.30.0.10} (spoof X-Forwarded-For impossible depuis les autres conteneurs) ; healthcheck caddy sur /healthz ; image zigbee2mqtt épinglée :2 (existence du tag vérifiée au registre — :latest peut sauter une majeure, Z2M a déjà cassé des configs en 1.x→2.x).
+  - `Caddyfile` : bloc :80 avec handle /healthz (200) + handle redir https. Piège découvert au test E2E : l'ordre STANDARD des directives Caddy exécute redir avant respond quel que soit l'ordre du fichier → première version (respond+redir à plat) redirigeait aussi /healthz ; corrigé par blocs handle mutuellement exclusifs. Un bloc :80 explicite désactivant la redirection auto de Caddy, elle est refaite à la main.
+  - `scripts/install.sh` : le résumé affiche la base trusted_proxies effective (ha_trusted_base).
+  - Tests (6 nouveaux) : aller-retour valeur piégée `pa$s; touch … $(id) &` (écriture quotée, env_get exact, sourcing bash sans exécution ni effet de bord), valeurs simples non quotées, apostrophes retirées, urlencode (réservés + charset sûr), db_url encodé dans configuration.yaml, CADDY_STATIC_IP trustée seule (subnet absent).
+- Tests:
+  - bats (debian:bookworm) : **38/38 ok, 0 échec**.
+  - E2E parsing .env : même valeur piégée lue par `docker compose config` et par sourcing bash — identiques, aucune exécution.
+  - E2E Caddy réel (caddy:2) : caddy validate OK ; /healthz → 200 "OK" ; commande exacte du healthcheck compose → exit 0 ; / → 301 Location https://… (vérifié depuis l'hôte). C'est ce test E2E qui a révélé le piège d'ordre des directives.
+  - `docker compose config` : ipv4_address 172.30.0.10 + image :2 résolues, config valide.
+  - shellcheck : 0 nouveau warning.
+- Commentaires / next steps: audit §1.5, §1.6, §3.4, §3.5 marqués TRAITÉS. Migration : le resserrage trusted_proxies s'applique au premier re-run une fois CADDY_STATIC_IP écrite dans .env (recréation du conteneur caddy nécessaire pour prendre l'IP figée : docker compose up -d --force-recreate caddy). Étape suivante (§6.6) : CI GitHub Actions (shellcheck + shfmt + bats), test de restore dans le smoke, HSTS sans preload, exclusion .env de bootstrap --local, dédup mapping service→conteneur.

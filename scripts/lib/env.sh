@@ -20,22 +20,34 @@ whi_escape() {
 }
 
 # env_get: print the value of KEY from FILE. Return 0 if found, 1 otherwise.
-# stdout: value (brute, sans le préfixe "KEY=" ; les '=' contenus dans la
-# valeur sont préservés). Les valeurs héritées polluées "KEY=KEY=value" par
-# d'anciennes versions restent nettoyées par strip_key_prefix_if_any côté
-# appelant.
+# stdout: value (sans le préfixe "KEY=" ; les '=' contenus dans la valeur sont
+# préservés ; les single-quotes enveloppantes écrites par env_set_kv sont
+# retirées). Les valeurs héritées polluées "KEY=KEY=value" par d'anciennes
+# versions restent nettoyées par strip_key_prefix_if_any côté appelant.
 env_get() {
   local key="$1" file="$2"
   [[ -f "$file" ]] || return 1
   awk -v k="$key" '
+    BEGIN { q = sprintf("%c", 39) }
     $0 ~ "^[[:space:]]*"k"=" {
       sub(/^[[:space:]]*/, "")
-      print substr($0, length(k) + 2)
+      v = substr($0, length(k) + 2)
+      if (length(v) >= 2 && substr(v, 1, 1) == q && substr(v, length(v)) == q) {
+        v = substr(v, 2, length(v) - 2)
+      }
+      print v
       found = 1
       exit
     }
     END { exit(found ? 0 : 1) }
   ' "$file"
+}
+
+# Vrai si la valeur doit être single-quotée pour survivre au sourcing bash
+# (espaces, $, ;, &, etc.). Les caractères listés sont sûrs à la fois pour
+# bash et pour le parser dotenv de docker compose.
+env_value_needs_quoting() {
+  [[ "$1" =~ [^A-Za-z0-9_@%+=:,./-] ]]
 }
 
 env_has_key() {
@@ -78,10 +90,24 @@ env_csv_normalize_for_key() {
 }
 
 # env_set_kv: set key=value in file idempotently. Return RC_OK on success.
+# Le .env est SOURCÉ par bash (en root) ET parsé par docker compose : les
+# valeurs contenant des caractères spéciaux sont single-quotées — compris par
+# les deux parsers — pour empêcher toute exécution au sourcing (audit §1.5).
+# Les apostrophes sont retirées : impossibles à représenter de façon
+# compatible par les deux parsers à la fois.
 env_set_kv() {
   local key="$1" value="$2" file="$3"
   value="$(strip_key_prefix_if_any "$key" "$value")"
   value="$(sanitize_env_value "$value")"
+  if [[ "$value" == *"'"* ]]; then
+    if command -v log_warn >/dev/null 2>&1; then
+      log_warn "env_set_kv: apostrophe(s) retirée(s) de la valeur de ${key} (non représentable dans un .env bash+compose)."
+    fi
+    value="${value//\'/}"
+  fi
+  if env_value_needs_quoting "$value"; then
+    value="'${value}'"
+  fi
   mkdir -p "$(dirname "$file")"
   touch "$file"
   chmod 600 "$file" || true
